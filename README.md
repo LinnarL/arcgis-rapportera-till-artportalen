@@ -33,7 +33,7 @@ Kör sedan verktyg 3 för att exportera alla dina godkända fynd från GIS till 
 
 ## Lägg till i ArcGIS Pro
 
-Katalogfönstret, Verktygslådor, högerklicka och välj Lägg till verktygslåda, välj
+Öppna katalogvyn --> Verktygslådor --> högerklicka och välj Lägg till verktygslåda, välj
 `RapporteraTillArtportalen.pyt`.
 
 ## Vad händer med ett fynd?
