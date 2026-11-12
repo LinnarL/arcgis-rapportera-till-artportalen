@@ -1,9 +1,9 @@
 # Rapportera till Artportalen
 
 ArcGIS Pro-verktygslåda som gör om artfynd i ett lager med Ekologigruppens schema
-Artinventering_generell, eller `main.Artforekomst_punkt` i en NVI-leverans (GeoPackage), till en fil för Artportalens Excelimport. Artnamnen kontrolleras mot
-Dyntaxa, dubbletter söks i Artportalen och andra källor via SOS, och oklara namn får förslag
-som granskas i ArcGIS.
+Artinventering_generell, eller `main.Artforekomst_punkt` i en NVI-leverans (GeoPackage), till en
+fil för Artportalens Excelimport. Artnamnen kontrolleras mot Dyntaxa, dubbletter söks i
+Artportalen och andra källor via SOS, och oklara namn får förslag som granskas i ArcGIS.
 
 ## Verktyg
 
@@ -37,28 +37,124 @@ Artportalen under Rapportera, Importera fynd.
 Katalogfönstret, Verktygslådor, högerklicka och välj Lägg till verktygslåda, välj
 `RapporteraTillArtportalen.pyt`.
 
+## Vad händer med ett fynd?
+
+Så här går verktyg 1 igenom varje rad i `Artforekomst_punkt`. För Artinventering_generell är
+logiken densamma.
+
+### 1. Raden läses
+
+Bara de fynd som lagret visar i kartan behandlas (urval och definitionsfråga gäller).
+
+| Uppgift | Varifrån |
+|---|---|
+| Artnamn att slå upp | `taxon_vetenskapligtNamn`. Är det tomt används `taxon_svensktNamn`. |
+| Datum | `datumForObjektavgr`. Samma datum blir start- och slutdatum. |
+| Koordinater | Punkten räknas om till SWEREF 99 TM, avrundat till hela meter. En multipunkt med en enda punkt går bra. |
+| Lokalnamn | Lokalnamnet du anger i verktyget, samma för alla fynd. Fält i lagret används inte. |
+| Noggrannhet | `Noggrannhet` om värdet finns i Artportalens lista, annars verktygets standard (10 m). GeoPackage saknar fältet, så där blir det alltid standarden. |
+| Antal | `Antal` om det är ett heltal större än 0. GeoPackage saknar fältet, så där blir det tomt. |
+| Publik kommentar | `kvantifiering`, t.ex. "Sparsam förekomst". |
+| Privat kommentar | "Utförare: `utforare`. Kartläggning: `FK_KartlaggningBM`" |
+| Källans id | `objektidentitet` (GlobalID i en geodatabas). Används bara av verktyg 2 och exporteras inte. |
+
+### 2. Fynd som inte ska rapporteras skippas
+
+Fyndet får status **Skippad**, med orsaken i fältet Orsak, om
+
+- artnamn saknas
+- namnet bara är bestämt till släkte (slutar på "sp.")
+- datum saknas
+- `kvantifiering` är "Förekommer sannolikt inte", alltså att arten eftersöktes men inte hittades
+- geometri saknas, eller punkten är en multipunkt med flera punkter.
+
+### 3. Artnamnet slås upp i Dyntaxa
+
+Verktyget söker accepterade taxa som har exakt det namnet, som svenskt namn, vetenskapligt namn
+eller synonym.
+
+- Ett taxon: det används.
+- En art och dess underarter eller varieteter: arten används (t.ex. snöbär).
+- Flera taxa, men namnet är det rekommenderade för ett av dem: det taxonet används.
+
+Fyndet går till granskning (status **Behöver granskning**) när
+
+- namnet innehåller frågetecken, "/" eller "eller" ("lerkroksmossa?", "blomsterlupin/sandlupin").
+  Osäkerheten ska inte döljas, så verktyget föreslår men väljer aldrig själv.
+- namnet inte finns i Dyntaxa, ofta en felstavning. Det mest lika namnet föreslås.
+- namnet passar flera taxa som inte är art och underart till varandra.
+- Dyntaxa undantar taxonet från rapportering. Arten föreslås.
+
+Förslaget skrivs i Förslag och skälet i Orsak.
+
+### 4. Namnet i rapporten bestäms
+
+Artnamn blir Dyntaxas rekommenderade namn på språket du valt i verktyget, oavsett vad som stod
+i fältdata. Artportalens import söker dock bland alla namn i Dyntaxa, även äldre namn och
+synonymer, och avvisar fyndet om namnet passar flera taxa (`TaxonConversionError_MultipleTaxons`).
+Hör namnet till fler än ett taxon skrivs därför taxonets Dyntaxa-id i stället, vilket mallen
+tillåter. Exempel: *Centaurea scabiosa* är både arten väddklint och ett äldre namn på underarten
+subsp. *scabiosa*, så väddklint skrivs som 264738. Körloggen listar vilka namn det gäller. Med
+svenska namn blir det fler, t.ex. snöbär och backsippa.
+
+### 5. Dubblettkontroll
+
+Verktyget frågar Artdatabankens fynddatabas (SOS) om det redan finns ett fynd av samma taxon
+(inklusive underarter), samma datum, inom dubblettradien (standard 50 m), från vilken källa som
+helst. Finns det skippas raden. Det fångar fynd som kopierats från Artportalen in i leveransen
+och fynd som redan har importerats.
+
+### 6. Resultat
+
+Ett fynd som klarar alla steg får status **Klar** och skrivs till rapporttabellen. Alla fynd
+finns i granskningslagret med status och orsak, så det går att se varför ett fynd inte kom med.
+
+Verktyg 2 tar raderna med Godkänn = Ja och gör om steg 3–5 med namnet i Förslag. Ändringar i
+granskningslagret, t.ex. ett annat lokalnamn, följer med.
+
+### Exempel
+
+| Fält i GeoPackage | Värde |
+|---|---|
+| taxon_vetenskapligtNamn | (tomt) |
+| taxon_svensktNamn | väddklint |
+| datumForObjektavgr | 2025-11-17 |
+| kvantifiering | Okänd förekomst |
+| utforare | Maya Edlund, Frida Bäckström-Wood |
+| FK_KartlaggningBM | Artinventering Albano |
+
+Verktyget körs med lokalnamnet "NVI Akademiska Hus Albano" och vetenskapliga namn.
+
+1. Namn, datum och geometri finns, och kvantifieringen säger inte att arten saknas.
+2. "väddklint" ger ett taxon i Dyntaxa: arten *Centaurea scabiosa* (264738).
+3. *Centaurea scabiosa* hör också till en underart, så Artnamn blir 264738.
+4. SOS har inget fynd av väddklint samma dag inom 50 m.
+5. Raden i rapporten:
+
+| Artnamn | Lokalnamn | Ost | Nord | Noggrannhet | Startdatum | Slutdatum | Publik kommentar | Privat kommentar |
+|---|---|---|---|---|---|---|---|---|
+| 264738 | NVI Akademiska Hus Albano | 673709 | 6583662 | 10 m | 2025-11-17 | 2025-11-17 | Okänd förekomst | Utförare: Maya Edlund, Frida Bäckström-Wood. Kartläggning: Artinventering Albano |
+
+Hade namnet varit "väddklint?" hade fyndet gått till granskning med förslaget *Centaurea
+scabiosa*.
+
 ## Parametrar
 
 ### 1. Förbered rapport till Artportalen
 
 | Parameter | Standard | Beskrivning |
 |---|---|---|
-| Artlager | | Punkt- eller multipunktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definitionsfråga gäller. `datumForObjektavgr` och ett artnamn krävs: `taxon_vetenskapligtNamn` om det är ifyllt, annars `taxon_svensktNamn`. |
+| Artlager | | Punkt- eller multipunktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definitionsfråga gäller. |
+| Lokalnamn | | Lokalnamn för alla fynd, t.ex. "NVI Akademiska Hus Albano". Krävs. Kan ändras per fynd i granskningslagret. |
 | Rapporttabell | `Artportalen_rapport` i projektets geodatabas | Se Kolumner nedan. |
 | Granskningslager | `Artportalen_granskning` | Alla fynd med status och namnförslag. Måste ligga i en fil-geodatabas. |
 | Artnamnsspråk | Vetenskapligt namn | Dyntaxas rekommenderade vetenskapliga eller svenska namn. |
 | Noggrannhet när fältet är tomt | 10 m | Används när `Noggrannhet` saknas eller inte finns i Artportalens lista. |
-| Sök dubbletter i Artportalen och SOS | på | Se Dubbletter nedan. |
+| Sök dubbletter i Artportalen och SOS | på | Se steg 5 ovan. Tar ungefär en minut per 300 fynd. |
 | Dubblettradie (m) | 50 | |
 | Dyntaxa-nyckel, SOS-nyckel | | Tomt: sparad nyckel, annars miljövariablerna `DYNTAXA_KEY` och `ARTDATABANKEN_API_KEY`. |
 | Spara nycklarna på den här datorn | av | Sparar nycklarna i Windows Autentiseringshanteraren efter ett lyckat testanrop. |
-| Lokalnamn | | Eget lokalnamn. Tomt: `objektnamn` används. |
-| Lokalnamn används | Bara där lagret saknar värde | Bara där lagret saknar värde: texten används där `objektnamn` är tomt. Ersätt lagrets värde: alla fynd får texten. |
 | Beslut från tidigare granskning | | Ett granskningslager från en tidigare körning. Förslag och Godkänn används per artnamn. Får inte vara samma lager som utdata. |
-
-Utan lokalnamn går fyndet till granskning. I NVI-leveransernas `Artforekomst_punkt` är
-`objektnamn` en kategori ("Övrig värdeart", "Rödlistad art"), så skriv in ett lokalnamn och
-välj Ersätt lagrets värde.
 
 ### 2. Lägg till granskade fynd
 
@@ -78,63 +174,41 @@ dubblettsökning och nycklar som ovan.
 Rapporten innehåller de kolumner som Artportalen kräver enligt mallens instruktioner, plus
 Antal och kommentarer.
 
-| Artportalen | Krav i Artportalen | Från lagret |
+| Artportalen | Krav i Artportalen | Värde |
 |---|---|---|
-| Artnamn | måste anges | `taxon_vetenskapligtNamn` eller `taxon_svensktNamn`, uppslaget i Dyntaxa |
-| Lokalnamn | måste anges, högst 75 tecken | `objektnamn` eller eget lokalnamn |
+| Artnamn | måste anges | Dyntaxas namn, eller Dyntaxa-id om namnet är tvetydigt |
+| Lokalnamn | måste anges, högst 75 tecken | lokalnamnet från verktyget |
 | Ost, Nord | måste anges för nya lokaler | geometrin, omräknad till SWEREF 99 TM |
 | Noggrannhet | måste anges för nya lokaler | `Noggrannhet`, annars verktygets standard |
 | Startdatum, Slutdatum | måste anges | `datumForObjektavgr` |
 | Antal | "kan, men bör ej, lämnas blank" | `Antal` om det är ett heltal större än 0, annars tomt |
-| Publik kommentar | kan lämnas tom, högst 1000 tecken | `kvantifiering`, t.ex. "Sparsam förekomst" |
-| Privat kommentar | kan lämnas tom, högst 1000 tecken | "Utförare: `utforare`. Kartläggning: `FK_KartlaggningBM`" (det som finns) |
+| Publik kommentar | kan lämnas tom, högst 1000 tecken | `kvantifiering` |
+| Privat kommentar | kan lämnas tom, högst 1000 tecken | utförare och kartläggning |
 
-Rapporttabellen har också fältet Källans id (`GlobalID`, i en GeoPackage `objektidentitet`) som
-verktyg 2 använder för att inte lägga till samma fynd två gånger. Det exporteras inte: mallens
-kolumn Externid får bara användas inom projekt. Är id:t inte unikt i lagret, till exempel när
-flera GeoPackage-filer slagits ihop, används OBJECTID.
+Rapporttabellen har också fältet Källans id, som verktyg 2 använder för att inte lägga till
+samma fynd två gånger. Det exporteras inte: mallens kolumn Externid får bara användas inom
+projekt. Är id:t inte unikt i lagret, till exempel när flera GeoPackage-filer slagits ihop,
+används OBJECTID.
 
 ### Antal
 
-Artportalen vill ha ett räknat antal, ett heltal större än 0, och Enhet (plantor/tuvor, exemplar,
-m² och så vidare) är valfri. Ett tomt Antal betyder att fyndet inte är räknat, vilket är
-sant för det mesta i NVI-data. Därför skriver verktyget aldrig något antal som inte är räknat:
+Artportalen vill ha ett räknat antal, ett heltal större än 0, och Enhet (plantor/tuvor,
+exemplar, m² och så vidare) är valfri. Ett tomt Antal betyder att fyndet inte är räknat, vilket
+gäller det mesta i NVI-data, så verktyget skriver aldrig ett antal som inte är räknat:
 
 - Artinventering_generell har heltalsfältet `Antal`. Det används när det är större än 0.
 - `Artforekomst_punkt` (SIS-TS 199002) saknar antal. `kvantifiering` är en klass (Okänd,
   Sparsam, God eller Mycket god förekomst) som inte går att översätta till ett antal, så Antal
-  blir tomt och klassen skrivs i Publik kommentar. Ett fåtal fynd har ett antal i `objektbeskrivning` ("1 buske", "Ca 5 st", "15 m2");
-  de går att fylla i för hand i rapporttabellen.
-- `kvantifiering` = "Förekommer sannolikt inte" betyder att arten inte hittades. De fynden
-  skippas.
-
-## Regler för artnamn
-
-- Pekar ett namn på både art och underart används arten (t.ex. snöbär).
-- Matchar namnet som ska skrivas i rapporten flera taxa i Dyntaxa skrivs Dyntaxa-id i
-  kolumnen Artnamn i stället, vilket mallen tillåter. Artportalens import slår upp namnet bland
-  alla namn, även äldre namn och synonymer, och avvisar annars fyndet med
-  `TaxonConversionError_MultipleTaxons`. Exempel: *Centaurea scabiosa* är både arten väddklint
-  och ett äldre namn på underarten subsp. *scabiosa*, så väddklint skrivs som 264738. Körloggen
-  listar vilka namn det gäller. Med svenska namn blir det fler, t.ex. snöbär och backsippa.
-- Till granskning med förslag: frågetecken, "a/b" eller "eller", felstavning (likhetssökning i
-  Dyntaxa), flera möjliga taxa, och taxa som Dyntaxa undantar från rapportering (förslaget blir
-  arten).
-- Namn som slutar på "sp." skippas.
-- Ska verktyg 1 köras om efter en granskning: ge det nya granskningslagret ett annat namn och
-  peka ut det gamla under Beslut från tidigare granskning. Ramverket raderar ett befintligt
-  utdata innan verktyget körs, så besluten i ett lager som skrivs över går inte att läsa.
-
-## Dubbletter
-
-Ett fynd skippas om SOS redan har ett fynd av samma taxon (inklusive underarter) samma datum
-inom dubblettradien, från vilken källa som helst. Det fångar fynd som kopierats från
-Artportalen och fynd som redan har importerats. Kontrollen tar ungefär en minut per 300 fynd.
+  blir tomt och klassen skrivs i Publik kommentar. Ett fåtal fynd har ett antal i
+  `objektbeskrivning` ("1 buske", "Ca 5 st", "15 m2"); de går att fylla i för hand i
+  rapporttabellen.
 
 ## Bra att veta
 
+- Ska verktyg 1 köras om efter en granskning: ge det nya granskningslagret ett annat namn och
+  peka ut det gamla under Beslut från tidigare granskning. Ramverket raderar ett befintligt
+  utdata innan verktyget körs, så besluten i ett lager som skrivs över går inte att läsa.
 - NVI-mallens fält `Noggrannhet` har standardvärdet 5 m, så nya punkter får 5 m om ingen ändrar
   det.
-- Multipunkter med en punkt (vanligt i GeoPackage) går bra. Med flera punkter skippas fyndet.
 - Dyntaxa-svar cachas i `%LOCALAPPDATA%\ArcGIS-RapporteraTillArtportalen`.
 - Avsluta redigeringen av granskningslagret innan verktyg 2 körs.

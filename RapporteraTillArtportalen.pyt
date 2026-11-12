@@ -114,11 +114,6 @@ STATUS_TILLAGD = "Tillagd efter granskning"
 STATUS_AVVISAD = "Avvisad vid granskning"
 DOMAIN_GODKANN = "RapporteraArtportalen_JaNej"
 
-# Hur lokalnamnet från verktyget förhåller sig till objektnamn i lagret
-LAGE_TOM = "Bara där lagret saknar värde"
-LAGE_ERSATT = "Ersätt lagrets värde"
-LAGEN_LOKAL = [LAGE_TOM, LAGE_ERSATT]
-
 # Fält i Artinventering_generell och Artforekomst_punkt (SIS-TS 199002, NVI-leveransens
 # GeoPackage). Namn, inte alias. Ett artnamnsfält och datum krävs. Finns båda artnamnsfälten
 # används det vetenskapliga namnet, och det svenska när det vetenskapliga är tomt.
@@ -128,7 +123,7 @@ SRC_DATUM = "datumForObjektavgr"
 SRC_ID = "objektidentitet"  # Källans id när lagret saknar GlobalID (GeoPackage)
 SRC_KARTL = "FK_KartlaggningBM"  # kartläggningen fyndet hör till (GeoPackage)
 SRC_FALT = [SRC_ARTNAMN, SRC_VETNAMN, SRC_DATUM, "Antal", "kvantifiering", "Noggrannhet",
-            "objektnamn", "utforare", SRC_KARTL, SRC_ID]
+            "utforare", SRC_KARTL, SRC_ID]
 # kvantifiering (SIS-TS 199002) som betyder att arten inte hittades: rapporteras inte som fynd
 EJ_FOREKOMST = re.compile(r"förekommer\s+(sannolikt\s+)?inte", re.I)
 
@@ -186,8 +181,8 @@ TOOLTIPS = {
         "visar behandlas.\n"
         "Datum (datumForObjektavgr) och ett artnamn krävs. Finns både "
         "taxon_vetenskapligtNamn och taxon_svensktNamn används det vetenskapliga namnet, och "
-        "det svenska när det vetenskapliga är tomt. Antal, Noggrannhet och objektnamn används "
-        "om de finns. Fynd med kvantifiering \"Förekommer sannolikt inte\" skippas, eftersom "
+        "det svenska när det vetenskapliga är tomt. Antal och Noggrannhet används om de "
+        "finns. Fynd med kvantifiering \"Förekommer sannolikt inte\" skippas, eftersom "
         "arten inte hittades.\n"
         "Rapporten innehåller Artportalens obligatoriska kolumner, Antal, Publik kommentar "
         "(fältet kvantifiering, t.ex. \"Sparsam förekomst\") och Privat kommentar "
@@ -235,19 +230,11 @@ TOOLTIPS = {
         "nya lokaler."
     ),
     "lokalnamn": (
-        "Lokalnamn att använda i rapporten, till exempel \"Campus Ultuna\". Hur det "
-        "förhåller sig till fältet objektnamn i lagret styrs av Lokalnamn används.\n"
-        "Lämnas den tom används objektnamn, och fynd utan objektnamn går till granskning, "
-        "där lokalnamnet kan fyllas i. Artportalen tillåter högst 75 tecken; längre namn "
-        "kortas."
-    ),
-    "lokalnamn_lage": (
-        "Bara där lagret saknar värde: lokalnamnet ovan används för fynd där objektnamn är "
-        "tomt. Övriga fynd behåller sitt objektnamn.\n"
-        "Ersätt lagrets värde: alla fynd får lokalnamnet ovan, oavsett objektnamn. Tänk på "
-        "att Artportalen skapar en ny lokal per unikt namn och koordinat, så ett gemensamt "
-        "namn ger många lokaler med samma namn.\n"
-        "Används inte när Lokalnamn är tomt."
+        "Lokalnamn för alla fynd i rapporten, till exempel \"NVI Akademiska Hus Albano\". "
+        "Artportalen kräver lokalnamn. Fält i lagret (t.ex. objektnamn) används inte, "
+        "eftersom de i NVI-data beskriver objektet och inte platsen. Lokalnamnet kan ändras "
+        "per fynd i granskningslagret innan Lägg till granskade fynd körs. Högst 75 tecken; "
+        "längre namn kortas."
     ),
     "dubbletter": (
         "Sök efter samma fynd i Artportalen och andra källor i SOS innan fyndet tas med. "
@@ -922,19 +909,12 @@ def _report_ids(dyntaxa, messages):
                                 "{} ({})".format(n, i) for n, i in sorted(dyntaxa.som_id.items())))
 
 
-def _lokalnamn(layer_value, text, mode):
-    """objektnamn i lagret + lokalnamn från verktyget enligt läget (LAGE_*)."""
-    if text and (mode == LAGE_ERSATT or not layer_value):
-        return text
-    return layer_value
-
-
 # =============================================================================
 # Verktyg 1: Förbered rapport
 # =============================================================================
 
 
-def _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages):
+def _read_source(layer, noggrannhet, lokalnamn, messages):
     """Läs lagret (urval och definitionsfråga gäller) -> lista med dicts."""
     fm = _field_map(layer)
     gid = _globalid_field(layer)
@@ -965,8 +945,8 @@ def _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages):
     def get(row, f):
         return row[idx[f]] if f in idx else None
 
-    if lokalnamn:
-        messages.addMessage("    Lokalnamn: \"{}\" ({})".format(lokalnamn, lokalnamn_lage.lower()))
+    lokalnamn = _cut(_text(lokalnamn), MAX_LOKALNAMN)
+    messages.addMessage("    Lokalnamn för alla fynd: \"{}\"".format(lokalnamn))
 
     rows = []
     with arcpy.da.SearchCursor(layer, use) as cur:
@@ -989,8 +969,7 @@ def _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages):
                 "xy_tm": xy_tm,
                 "xy_wgs": xy_wgs,
                 "Antal": int(antal) if isinstance(antal, (int, float)) and antal > 0 else None,
-                "Lokalnamn": _cut(_lokalnamn(_text(get(r, "objektnamn")), lokalnamn,
-                                             lokalnamn_lage), MAX_LOKALNAMN),
+                "Lokalnamn": lokalnamn,
                 "Ost": round(xy_tm[0]) if xy_tm else None,
                 "Nord": round(xy_tm[1]) if xy_tm else None,
                 "Noggrannhet": nogg if nogg in NOGGRANNHET else noggrannhet,
@@ -1021,9 +1000,11 @@ def _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages):
 def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
                   noggrannhet=DEFAULT_NOGGRANNHET, lokalnamn="", dubbletter=True,
                   radie=DEFAULT_RADIE_M, dyntaxa_key="", sos_key="", messages=None,
-                  previous=None, lokalnamn_lage=LAGE_TOM):
+                  previous=None):
     messages = messages or _PrintMessages()
     t_start = time.time()
+    if not _text(lokalnamn):
+        raise ValueError("Ange ett lokalnamn. Artportalen kräver lokalnamn för varje fynd.")
     if not dyntaxa_key:
         raise ValueError(_missing_key_text("Dyntaxa-nyckel", ENV_DYNTAXA))
     if dubbletter and not sos_key:
@@ -1031,7 +1012,7 @@ def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
 
     messages.addMessage("Steg 1 av 4: läser fynd")
     arcpy.SetProgressor("default", "Steg 1 av 4: läser fynd")
-    rows, sr_in = _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages)
+    rows, sr_in = _read_source(layer, noggrannhet, lokalnamn, messages)
     messages.addMessage("    {} fynd i lagret (urval och definitionsfråga gäller)".format(len(rows)))
     if not rows:
         raise ValueError("Lagret har inga fynd att behandla (kontrollera urval och "
@@ -1485,15 +1466,6 @@ def _options_params(include_place=True):
     radie.filter.list = [1, 10000]
     radie.value = DEFAULT_RADIE_M
     out += [dubb, radie]
-    if include_place:
-        cat = "Lokalnamn"
-        text = _param("lokalnamn", "Lokalnamn", "GPString", category=cat)
-        mode = _param("lokalnamn_lage", "Lokalnamn används", "GPString", "Required",
-                      category=cat)
-        mode.filter.type = "ValueList"
-        mode.filter.list = LAGEN_LOKAL
-        mode.value = LAGE_TOM
-        out += [text, mode]
     cat = "API-nycklar"
     dk = _param("dyntaxa_key", "Dyntaxa-nyckel", "GPStringHidden", category=cat)
     sk = _param("sos_key", "SOS-nyckel", "GPStringHidden", category=cat)
@@ -1509,8 +1481,6 @@ def _p(parameters):
 def _options_update(p):
     if "radie" in p:
         p["radie"].enabled = bool(p["dubbletter"].value)
-    if "lokalnamn" in p:
-        p["lokalnamn_lage"].enabled = bool(_text(p["lokalnamn"].valueAsText))
 
 
 def _options_messages(p):
@@ -1568,12 +1538,13 @@ class ForberedRapport:
     def getParameterInfo(self):
         lyr = _param("in_layer", "Artlager", "GPFeatureLayer", "Required")
         lyr.filter.list = ["Point", "Multipoint"]
+        lokal = _param("lokalnamn", "Lokalnamn", "GPString", "Required")
         table = _param("out_table", "Rapporttabell", "DETable", "Required", "Output")
         review = _param("out_review", "Granskningslager", "DEFeatureClass", "Required", "Output")
         prev = _param("tidigare", "Beslut från tidigare granskning", "GPFeatureLayer",
                       category="Inställningar")
         prev.filter.list = ["Point"]
-        return [lyr, table, review] + _options_params(True) + [prev]
+        return [lyr, lokal, table, review] + _options_params(True) + [prev]
 
     def isLicensed(self):
         return True
@@ -1634,8 +1605,7 @@ class ForberedRapport:
                 p["sprak"].valueAsText, p["noggrannhet"].valueAsText,
                 _text(p["lokalnamn"].valueAsText), bool(p["dubbletter"].value),
                 p["radie"].value or DEFAULT_RADIE_M, dk, sk, messages,
-                previous=p["tidigare"].value,
-                lokalnamn_lage=p["lokalnamn_lage"].valueAsText or LAGE_TOM)
+                previous=p["tidigare"].value)
         _execute(run, messages)
 
 
