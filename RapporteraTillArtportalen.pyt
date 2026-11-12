@@ -10,7 +10,7 @@ om dem till Artportalens Excelimport.
 1. Förbered rapport till Artportalen
    Läser lagret (urval och definitionsfråga gäller), slår upp varje artnamn i
    Dyntaxa, söker dubbletter i Artportalen via SOS och skriver
-   - en rapporttabell med kolumnerna i mallens blad "Alla arter"
+   - en rapporttabell med Artportalens obligatoriska kolumner, Antal och kommentarer
    - ett granskningslager (punkter) med status och namnförslag för varje fynd.
 2. Lägg till granskade fynd
    Tar raderna i granskningslagret som har Godkänn = Ja och lägger till dem i
@@ -102,7 +102,6 @@ NOGGRANNHET = ["1 m", "5 m", "10 m", "25 m", "50 m", "75 m", "100 m", "125 m", "
 DEFAULT_NOGGRANNHET = "10 m"
 DEFAULT_RADIE_M = 50
 MAX_RADER_PER_IMPORT = 2000
-MAX_KOMMENTAR = 1000
 MAX_LOKALNAMN = 75
 MALL_BLAD = "Alla arter"
 MALL_RUBRIKRAD = 2
@@ -115,17 +114,30 @@ STATUS_TILLAGD = "Tillagd efter granskning"
 STATUS_AVVISAD = "Avvisad vid granskning"
 DOMAIN_GODKANN = "RapporteraArtportalen_JaNej"
 
+# Hur lokalnamnet från verktyget förhåller sig till objektnamn i lagret
+LAGE_TOM = "Bara där lagret saknar värde"
+LAGE_ERSATT = "Ersätt lagrets värde"
+LAGEN_LOKAL = [LAGE_TOM, LAGE_ERSATT]
+
 # Fält i Artinventering_generell och Artforekomst_punkt (SIS-TS 199002, NVI-leveransens
 # GeoPackage). Namn, inte alias. Ett artnamnsfält och datum krävs. Finns båda artnamnsfälten
 # används det vetenskapliga namnet, och det svenska när det vetenskapliga är tomt.
 SRC_ARTNAMN = "taxon_svensktNamn"
 SRC_VETNAMN = "taxon_vetenskapligtNamn"
 SRC_DATUM = "datumForObjektavgr"
-SRC_ID = "objektidentitet"  # Externid när lagret saknar GlobalID (GeoPackage)
-SRC_FALT = [SRC_ARTNAMN, SRC_VETNAMN, SRC_DATUM, "Antal", "kvantifiering", "objektbeskrivning",
-            "Noggrannhet", "utforare", "objektnamn", "Andrahand", SRC_ID]
+SRC_ID = "objektidentitet"  # Källans id när lagret saknar GlobalID (GeoPackage)
+SRC_KARTL = "FK_KartlaggningBM"  # kartläggningen fyndet hör till (GeoPackage)
+SRC_FALT = [SRC_ARTNAMN, SRC_VETNAMN, SRC_DATUM, "Antal", "kvantifiering", "Noggrannhet",
+            "objektnamn", "utforare", SRC_KARTL, SRC_ID]
+# kvantifiering (SIS-TS 199002) som betyder att arten inte hittades: rapporteras inte som fynd
+EJ_FOREKOMST = re.compile(r"förekommer\s+(sannolikt\s+)?inte", re.I)
 
-# Rapporttabellens fält: (namn, alias = kolumnrubrik i mallen, typ, längd)
+# Rapporttabellens fält: (namn, alias = kolumnrubrik i mallen, typ, längd). Artportalen
+# kräver Artnamn, Lokalnamn, Ost, Nord, Noggrannhet, Startdatum och Slutdatum (mallens
+# instruktioner); Antal kan lämnas tomt men bör anges när det är räknat, och Publik
+# kommentar får kvantifiering (förekomstklassen) och Privat kommentar utförare och
+# kartläggning. Kalla_id är
+# verktygets eget id för fyndet och exporteras inte (Externid får bara användas i projekt).
 RAPPORT_FALT = [
     ("Artnamn", "Artnamn", "TEXT", 255),
     ("Antal", "Antal", "LONG", None),
@@ -135,12 +147,12 @@ RAPPORT_FALT = [
     ("Noggrannhet", "Noggrannhet", "TEXT", 10),
     ("Startdatum", "Startdatum", "TEXT", 10),
     ("Slutdatum", "Slutdatum", "TEXT", 10),
-    ("Publik_kommentar", "Publik kommentar", "TEXT", MAX_KOMMENTAR),
-    ("Privat_kommentar", "Privat kommentar", "TEXT", MAX_KOMMENTAR),
-    ("Andrahand", "Andrahand", "TEXT", 3),
-    ("Externid", "Externid", "TEXT", 50),
+    ("Publik_kommentar", "Publik kommentar", "TEXT", 1000),
+    ("Privat_kommentar", "Privat kommentar", "TEXT", 1000),
+    ("Kalla_id", "Källans id (exporteras inte)", "TEXT", 50),
 ]
 RAPPORT_NAMN = [f[0] for f in RAPPORT_FALT]
+EXPORT_FALT = [f for f in RAPPORT_FALT if f[0] != "Kalla_id"]
 
 # Granskningslagrets egna fält, före rapportfälten
 GRANSKNING_FALT = [
@@ -175,15 +187,22 @@ TOOLTIPS = {
         "visar behandlas.\n"
         "Datum (datumForObjektavgr) och ett artnamn krävs. Finns både "
         "taxon_vetenskapligtNamn och taxon_svensktNamn används det vetenskapliga namnet, och "
-        "det svenska när det vetenskapliga är tomt. Antal, kvantifiering, objektbeskrivning, "
-        "Noggrannhet, utforare, objektnamn och Andrahand används om de finns.\n"
-        "GlobalID, eller objektidentitet i en GeoPackage, blir Externid i Artportalen, så att "
-        "varje fynd går att spåra tillbaka till punkten. Multipunkter med en punkt går bra; "
-        "med flera punkter skippas fyndet."
+        "det svenska när det vetenskapliga är tomt. Antal, Noggrannhet och objektnamn används "
+        "om de finns. Fynd med kvantifiering \"Förekommer sannolikt inte\" skippas, eftersom "
+        "arten inte hittades.\n"
+        "Rapporten innehåller Artportalens obligatoriska kolumner, Antal, Publik kommentar "
+        "(fältet kvantifiering, t.ex. \"Sparsam förekomst\") och Privat kommentar "
+        "(\"Utförare: <utforare>. Kartläggning: <FK_KartlaggningBM>\"). GlobalID, "
+        "eller objektidentitet i en GeoPackage, sparas som Källans id i rapporttabellen men "
+        "exporteras inte. Multipunkter med en punkt går bra; med flera punkter skippas fyndet."
     ),
     "out_table": (
-        "Rapporttabell i en geodatabas. Kolumnerna följer bladet \"Alla arter\" i "
-        "Artportalens Excelmall och fältens alias är mallens kolumnrubriker. Bara fynd med "
+        "Rapporttabell i en geodatabas med Artportalens obligatoriska kolumner (Artnamn, "
+        "Lokalnamn, Ost, Nord, Noggrannhet, Startdatum, Slutdatum), Antal, Publik "
+        "kommentar (kvantifiering) och Privat kommentar (utförare och kartläggning). "
+        "Fältens alias "
+        "är kolumnrubrikerna i mallens blad \"Alla arter\". Fältet Källans id pekar ut "
+        "punkten i indata och exporteras inte. Bara fynd med "
         "status Klar skrivs hit; granskade fynd läggs till med verktyget Lägg till "
         "granskade fynd.\n"
         "Finns tabellen redan skrivs den över (om Skriv över utdata är på)."
@@ -217,9 +236,19 @@ TOOLTIPS = {
         "nya lokaler."
     ),
     "lokalnamn": (
-        "Lokalnamn för fynd där fältet objektnamn (Lokalnamn) är tomt. Lämnas den tom går "
-        "sådana fynd till granskning, där lokalnamnet kan fyllas i. Artportalen tillåter "
-        "högst 75 tecken; längre namn kortas."
+        "Lokalnamn att använda i rapporten, till exempel \"Campus Ultuna\". Hur det "
+        "förhåller sig till fältet objektnamn i lagret styrs av Lokalnamn används.\n"
+        "Lämnas den tom används objektnamn, och fynd utan objektnamn går till granskning, "
+        "där lokalnamnet kan fyllas i. Artportalen tillåter högst 75 tecken; längre namn "
+        "kortas."
+    ),
+    "lokalnamn_lage": (
+        "Bara där lagret saknar värde: lokalnamnet ovan används för fynd där objektnamn är "
+        "tomt. Övriga fynd behåller sitt objektnamn.\n"
+        "Ersätt lagrets värde: alla fynd får lokalnamnet ovan, oavsett objektnamn. Tänk på "
+        "att Artportalen skapar en ny lokal per unikt namn och koordinat, så ett gemensamt "
+        "namn ger många lokaler med samma namn.\n"
+        "Används inte när Lokalnamn är tomt."
     ),
     "dubbletter": (
         "Sök efter samma fynd i Artportalen och andra källor i SOS innan fyndet tas med. "
@@ -255,7 +284,7 @@ TOOLTIPS = {
         "Avvisad vid granskning. Lagrets urval gäller."
     ),
     "in_table": (
-        "Rapporttabellen som fynden läggs till i. Fynd vars Externid redan finns i tabellen "
+        "Rapporttabellen som fynden läggs till i. Fynd vars Källans id redan finns i tabellen "
         "läggs inte till igen. Tabellen ändras på plats, som med verktyget Lägg till "
         "(Append)."
     ),
@@ -781,11 +810,11 @@ def _previous_decisions(review):
     return out
 
 
-def _existing_externid(table):
+def _existing_ids(table):
     fm = _field_map(table)
-    if "externid" not in fm:
+    if "kalla_id" not in fm:
         return set()
-    with arcpy.da.SearchCursor(table, [fm["externid"]]) as cur:
+    with arcpy.da.SearchCursor(table, [fm["kalla_id"]]) as cur:
         return {_text(r[0]) for r in cur if _text(r[0])}
 
 
@@ -800,7 +829,7 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
     Status, Orsak, Forslag, Dyntaxa_id, Alternativ, Artnamn och taxon.
     """
     res = {"Status": STATUS_KLAR, "Orsak": "", "Forslag": "", "Dyntaxa_id": None,
-           "Alternativ": "", "Artnamn": "", "taxon": None, "anteckning": ""}
+           "Alternativ": "", "Artnamn": "", "taxon": None}
 
     def review(reason):
         res["Status"] = STATUS_GRANSKA
@@ -825,6 +854,10 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
     if not row["Startdatum"]:
         res.update(Status=STATUS_SKIPPAD, Orsak="datum saknas")
         return res
+    if row.get("ej_forekomst"):
+        res.update(Status=STATUS_SKIPPAD, Orsak="kvantifiering anger att arten inte hittades "
+                   "(\"{}\")".format(row["ej_forekomst"]))
+        return res
     if wgs84_xy is None:
         res.update(Status=STATUS_SKIPPAD,
                    Orsak="geometri saknas eller är en multipunkt med flera punkter")
@@ -842,13 +875,6 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
         except ValueError as exc:
             return review("godkänt förslag '{}' går inte att använda: {}".format(
                 res["Forslag"], exc))
-        try:  # notera bara när granskningen gav ett annat taxon än namnet i fältdata
-            original = None if OKLART.search(name) else dyntaxa.lookup(name)["taxonId"]
-        except ValueError:
-            original = None
-        if original != taxon["taxonId"]:
-            res["anteckning"] ="Artnamn i fältdata '{}' tolkat som {} vid granskning".format(
-                name, dyntaxa.vet(taxon))
     elif OKLART.search(name):
         return review("osäkert eller dubbelt artnamn")
     else:
@@ -874,10 +900,11 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
     return res
 
 
-def _private_comment(base, res):
-    parts = [base, "Dyntaxa {}".format(res["Dyntaxa_id"]) if res["Dyntaxa_id"] else "",
-             res.get("anteckning", "")]
-    return _cut(". ".join(p for p in parts if p), MAX_KOMMENTAR)
+def _lokalnamn(layer_value, text, mode):
+    """objektnamn i lagret + lokalnamn från verktyget enligt läget (LAGE_*)."""
+    if text and (mode == LAGE_ERSATT or not layer_value):
+        return text
+    return layer_value
 
 
 # =============================================================================
@@ -885,7 +912,7 @@ def _private_comment(base, res):
 # =============================================================================
 
 
-def _read_source(layer, noggrannhet, lokalnamn, messages):
+def _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages):
     """Läs lagret (urval och definitionsfråga gäller) -> lista med dicts."""
     fm = _field_map(layer)
     gid = _globalid_field(layer)
@@ -903,17 +930,21 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
     tm = arcpy.SpatialReference(SWEREF99TM)
     wgs = arcpy.SpatialReference(WGS84)
     missing = [f for f in SRC_FALT if f.lower() not in fm
-               and f not in (SRC_ID, SRC_VETNAMN, SRC_ARTNAMN)]
+               and f not in (SRC_ID, SRC_VETNAMN, SRC_ARTNAMN, "kvantifiering", "utforare",
+                             SRC_KARTL)]
     if missing:
         messages.addMessage("    Fält som saknas i lagret och lämnas tomma: " + ", ".join(missing))
     if not gid and SRC_ID.lower() in fm:
-        messages.addMessage("    Lagret saknar GlobalID. Externid blir objektidentitet.")
+        messages.addMessage("    Lagret saknar GlobalID. Källans id blir objektidentitet.")
     elif not gid:
-        messages.addWarningMessage("Lagret har inget GlobalID. Externid blir OBJECTID, som inte "
-                                   "är stabilt om data kopieras.")
+        messages.addWarningMessage("Lagret har inget GlobalID. Källans id blir OBJECTID, som "
+                                   "inte är stabilt om data kopieras.")
 
     def get(row, f):
         return row[idx[f]] if f in idx else None
+
+    if lokalnamn:
+        messages.addMessage("    Lokalnamn: \"{}\" ({})".format(lokalnamn, lokalnamn_lage.lower()))
 
     rows = []
     with arcpy.da.SearchCursor(layer, use) as cur:
@@ -928,9 +959,7 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
                 xy_tm, xy_wgs = (p_tm.X, p_tm.Y), (p_wgs.X, p_wgs.Y)
             nogg = _text(get(r, "Noggrannhet"))
             antal = get(r, "Antal")
-            publik = ". ".join(x for x in (_text(get(r, "objektbeskrivning")),
-                                           _text(get(r, "kvantifiering"))) if x)
-            obs = _text(get(r, "utforare"))
+            kvant = _text(get(r, "kvantifiering"))
             row = {
                 "Kalla_OID": r[0],
                 "Namn_i_lagret": _text(get(r, SRC_VETNAMN)) or _text(get(r, SRC_ARTNAMN)),
@@ -938,26 +967,39 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
                 "xy_tm": xy_tm,
                 "xy_wgs": xy_wgs,
                 "Antal": int(antal) if isinstance(antal, (int, float)) and antal > 0 else None,
-                "Lokalnamn": _cut(_text(get(r, "objektnamn")) or lokalnamn, MAX_LOKALNAMN),
+                "Lokalnamn": _cut(_lokalnamn(_text(get(r, "objektnamn")), lokalnamn,
+                                             lokalnamn_lage), MAX_LOKALNAMN),
                 "Ost": round(xy_tm[0]) if xy_tm else None,
                 "Nord": round(xy_tm[1]) if xy_tm else None,
                 "Noggrannhet": nogg if nogg in NOGGRANNHET else noggrannhet,
                 "Startdatum": _date_text(get(r, SRC_DATUM)),
-                "Publik_kommentar": _cut(publik, MAX_KOMMENTAR),
-                "Privat_kommentar": _cut("Observatör: " + obs if obs else "", MAX_KOMMENTAR),
-                "Andrahand": "Ja" if _text(get(r, "Andrahand")).lower() in ("ja", "x", "1") else "",
-                "Externid": (_text(r[-1]) if gid else _text(get(r, SRC_ID))
+                "Kalla_id": (_text(r[-1]) if gid else _text(get(r, SRC_ID))
                              or "OID {}".format(r[0])),
+                "Publik_kommentar": _cut(kvant, 1000),
+                "Privat_kommentar": _cut(". ".join(
+                    "{}: {}".format(label, _text(get(r, f)))
+                    for label, f in (("Utförare", "utforare"), ("Kartläggning", SRC_KARTL))
+                    if _text(get(r, f))), 1000),
+                "ej_forekomst": kvant if EJ_FOREKOMST.search(kvant) else "",
             }
             row["Slutdatum"] = row["Startdatum"]
             rows.append(row)
+    ids = [row["Kalla_id"] for row in rows]
+    if len(set(ids)) < len(ids):
+        # objektidentitet är bara unik inom en leverans; sammanslagna gpkg-lager krockar
+        messages.addWarningMessage(
+            "Källans id är inte unikt i lagret (t.ex. objektidentitet från flera "
+            "sammanslagna GeoPackage-filer). OBJECTID används i stället, så kör om "
+            "verktyget på samma lager om rapporten ska kompletteras.")
+        for row in rows:
+            row["Kalla_id"] = "OID {}".format(row["Kalla_OID"])
     return rows, sr_in
 
 
 def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
                   noggrannhet=DEFAULT_NOGGRANNHET, lokalnamn="", dubbletter=True,
                   radie=DEFAULT_RADIE_M, dyntaxa_key="", sos_key="", messages=None,
-                  previous=None):
+                  previous=None, lokalnamn_lage=LAGE_TOM):
     messages = messages or _PrintMessages()
     t_start = time.time()
     if not dyntaxa_key:
@@ -967,7 +1009,7 @@ def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
 
     messages.addMessage("Steg 1 av 4: läser fynd")
     arcpy.SetProgressor("default", "Steg 1 av 4: läser fynd")
-    rows, sr_in = _read_source(layer, noggrannhet, lokalnamn, messages)
+    rows, sr_in = _read_source(layer, noggrannhet, lokalnamn, lokalnamn_lage, messages)
     messages.addMessage("    {} fynd i lagret (urval och definitionsfråga gäller)".format(len(rows)))
     if not rows:
         raise ValueError("Lagret har inga fynd att behandla (kontrollera urval och "
@@ -1008,11 +1050,9 @@ def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
                 values = dict(row)
                 values["Artnamn"] = res["Artnamn"]
                 if res["Status"] == STATUS_KLAR:
-                    values["Privat_kommentar"] = _private_comment(row["Privat_kommentar"], res)
                     ins_t.insertRow([values[f] for f in RAPPORT_NAMN])
                     g = dyntaxa.group(res["taxon"])
                     groups[g] = groups.get(g, 0) + 1
-                    values["Privat_kommentar"] = row["Privat_kommentar"]
                 values.update({
                     "Status": res["Status"], "Orsak": _cut(res["Orsak"], 1000),
                     "Forslag": res["Forslag"], "Godkann": None, "Dyntaxa_id": res["Dyntaxa_id"],
@@ -1091,7 +1131,7 @@ def _run_lagg_till(review, table, sprak=SPRAK_VET, dubbletter=True, radie=DEFAUL
                         .format(total, STATUS_GRANSKA))
     if not total:
         return {}
-    existing = _existing_externid(table)
+    existing = _existing_ids(table)
     dyntaxa = Dyntaxa(dyntaxa_key, sprak)
     dubb = Dubbletter(sos_key, radie) if dubbletter else None
     counts = {"tillagda": 0, "avvisade": 0, "obesvarade": 0, "kvar": 0, "fanns": 0}
@@ -1131,15 +1171,14 @@ def _run_lagg_till(review, table, sprak=SPRAK_VET, dubbletter=True, radie=DEFAUL
                 if res["Status"] != STATUS_KLAR:
                     v["Status"] = res["Status"]
                     counts["kvar"] += 1
-                elif _text(row["Externid"]) in existing:
+                elif _text(row["Kalla_id"]) in existing:
                     v["Status"] = STATUS_TILLAGD
                     v["Orsak"] = "fanns redan i rapporttabellen"
                     counts["fanns"] += 1
                 else:
                     row["Artnamn"] = res["Artnamn"]
-                    row["Privat_kommentar"] = _private_comment(row["Privat_kommentar"], res)
                     new_rows.append([row[n] for n in RAPPORT_NAMN])
-                    existing.add(_text(row["Externid"]))
+                    existing.add(_text(row["Kalla_id"]))
                     v["Status"] = STATUS_TILLAGD
                     counts["tillagda"] += 1
                 updates[r[0]] = v
@@ -1178,11 +1217,12 @@ def _run_exportera(table, mall, out_xlsx, messages=None):
     messages = messages or _PrintMessages()
     from openpyxl import load_workbook
     tfm = _field_map(table)
-    missing = [n for n in RAPPORT_NAMN if n.lower() not in tfm]
+    names = [f[0] for f in EXPORT_FALT]
+    missing = [n for n in names if n.lower() not in tfm]
     if missing:
         raise ValueError("Tabellen saknar fälten {}. Använd rapporttabellen från Förbered rapport "
                          "till Artportalen.".format(", ".join(missing)))
-    with arcpy.da.SearchCursor(table, ["OID@"] + [tfm[n.lower()] for n in RAPPORT_NAMN]) as cur:
+    with arcpy.da.SearchCursor(table, ["OID@"] + [tfm[n.lower()] for n in names]) as cur:
         rows = [list(r[1:]) for r in sorted(cur, key=lambda r: r[0])]
     if not rows:
         raise ValueError("Rapporttabellen är tom.")
@@ -1195,7 +1235,7 @@ def _run_exportera(table, mall, out_xlsx, messages=None):
     for c in ws[MALL_RUBRIKRAD]:
         if c.value and c.value not in header:
             header[_text(c.value)] = c.column
-    aliases = [f[1] for f in RAPPORT_FALT]
+    aliases = [f[1] for f in EXPORT_FALT]
     missing = [a for a in aliases if a not in header]
     if missing:
         raise ValueError("Mallens blad \"{}\" saknar kolumnerna {} på rad {}."
@@ -1314,8 +1354,7 @@ def _options_params(include_place=True):
         nogg.filter.type = "ValueList"
         nogg.filter.list = NOGGRANNHET
         nogg.value = DEFAULT_NOGGRANNHET
-        lokal = _param("lokalnamn", "Lokalnamn när fältet är tomt", "GPString", category=cat)
-        out += [nogg, lokal]
+        out += [nogg]
     dubb = _param("dubbletter", "Sök dubbletter i Artportalen och SOS", "GPBoolean", category=cat)
     dubb.value = True
     radie = _param("radie", "Dubblettradie (m)", "GPLong", category=cat)
@@ -1323,6 +1362,15 @@ def _options_params(include_place=True):
     radie.filter.list = [1, 10000]
     radie.value = DEFAULT_RADIE_M
     out += [dubb, radie]
+    if include_place:
+        cat = "Lokalnamn"
+        text = _param("lokalnamn", "Lokalnamn", "GPString", category=cat)
+        mode = _param("lokalnamn_lage", "Lokalnamn används", "GPString", "Required",
+                      category=cat)
+        mode.filter.type = "ValueList"
+        mode.filter.list = LAGEN_LOKAL
+        mode.value = LAGE_TOM
+        out += [text, mode]
     cat = "API-nycklar"
     dk = _param("dyntaxa_key", "Dyntaxa-nyckel", "GPStringHidden", category=cat)
     sk = _param("sos_key", "SOS-nyckel", "GPStringHidden", category=cat)
@@ -1338,6 +1386,8 @@ def _p(parameters):
 def _options_update(p):
     if "radie" in p:
         p["radie"].enabled = bool(p["dubbletter"].value)
+    if "lokalnamn" in p:
+        p["lokalnamn_lage"].enabled = bool(_text(p["lokalnamn"].valueAsText))
 
 
 def _options_messages(p):
@@ -1461,7 +1511,8 @@ class ForberedRapport:
                 p["sprak"].valueAsText, p["noggrannhet"].valueAsText,
                 _text(p["lokalnamn"].valueAsText), bool(p["dubbletter"].value),
                 p["radie"].value or DEFAULT_RADIE_M, dk, sk, messages,
-                previous=p["tidigare"].value)
+                previous=p["tidigare"].value,
+                lokalnamn_lage=p["lokalnamn_lage"].valueAsText or LAGE_TOM)
         _execute(run, messages)
 
 

@@ -8,7 +8,8 @@ som granskas i ArcGIS.
 ## Verktyg
 
 1. **Förbered rapport till Artportalen** läser lagret och skriver
-   - en rapporttabell med kolumnerna i mallens blad "Alla arter" (alias = kolumnrubrik)
+   - en rapporttabell med Artportalens obligatoriska kolumner, Antal och kommentarer
+     (alias = kolumnrubrik)
    - ett granskningslager (punkter) med Status, Orsak, Förslag och Godkänn för varje fynd.
 2. **Lägg till granskade fynd** lägger till rader med Godkänn = Ja i rapporttabellen.
 3. **Exportera till Artportalens Excelmall** skriver tabellen i mallen, högst 2000 fynd per fil.
@@ -39,16 +40,21 @@ Katalogfönstret, Verktygslådor, högerklicka och välj Lägg till verktygslåd
 | Parameter | Standard | Beskrivning |
 |---|---|---|
 | Artlager | | Punkt- eller multipunktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definitionsfråga gäller. `datumForObjektavgr` och ett artnamn krävs: `taxon_vetenskapligtNamn` om det är ifyllt, annars `taxon_svensktNamn`. |
-| Rapporttabell | `Artportalen_rapport` i projektets geodatabas | Tabell med Artportalens kolumner. |
+| Rapporttabell | `Artportalen_rapport` i projektets geodatabas | Se Kolumner nedan. |
 | Granskningslager | `Artportalen_granskning` | Alla fynd med status och namnförslag. Måste ligga i en fil-geodatabas. |
 | Artnamnsspråk | Vetenskapligt namn | Dyntaxas rekommenderade vetenskapliga eller svenska namn. |
 | Noggrannhet när fältet är tomt | 10 m | Används när `Noggrannhet` saknas eller inte finns i Artportalens lista. |
-| Lokalnamn när fältet är tomt | | Tomt: fynd utan `objektnamn` går till granskning. |
 | Sök dubbletter i Artportalen och SOS | på | Se Dubbletter nedan. |
 | Dubblettradie (m) | 50 | |
 | Dyntaxa-nyckel, SOS-nyckel | | Tomt: sparad nyckel, annars miljövariablerna `DYNTAXA_KEY` och `ARTDATABANKEN_API_KEY`. |
 | Spara nycklarna på den här datorn | av | Sparar nycklarna i Windows Autentiseringshanteraren efter ett lyckat testanrop. |
+| Lokalnamn | | Eget lokalnamn. Tomt: `objektnamn` används. |
+| Lokalnamn används | Bara där lagret saknar värde | Bara där lagret saknar värde: texten används där `objektnamn` är tomt. Ersätt lagrets värde: alla fynd får texten. |
 | Beslut från tidigare granskning | | Ett granskningslager från en tidigare körning. Förslag och Godkänn används per artnamn. Får inte vara samma lager som utdata. |
+
+Utan lokalnamn går fyndet till granskning. I NVI-leveransernas `Artforekomst_punkt` är
+`objektnamn` en kategori ("Övrig värdeart", "Rödlistad art"), så skriv in ett lokalnamn och
+välj Ersätt lagrets värde.
 
 ### 2. Lägg till granskade fynd
 
@@ -63,20 +69,40 @@ dubblettsökning och nycklar som ovan.
 | Artportalens Excelmall (.xlsx) | Mallen ändras inte. |
 | Excelfil för import | Fler än 2000 fynd ger `_del1`, `_del2` och så vidare. |
 
-## Fältöversättning
+## Kolumner
 
-| Artportalen | Artinventering_generell |
-|---|---|
-| Artnamn | `taxon_vetenskapligtNamn` eller `taxon_svensktNamn`, uppslaget i Dyntaxa |
-| Antal | `Antal` |
-| Lokalnamn | `objektnamn` (högst 75 tecken) |
-| Ost, Nord | geometrin, omräknad till SWEREF 99 TM |
-| Noggrannhet | `Noggrannhet` |
-| Startdatum, Slutdatum | `datumForObjektavgr` |
-| Publik kommentar | `objektbeskrivning` och `kvantifiering` |
-| Privat kommentar | `utforare`, Dyntaxa-id och eventuell omtolkning vid granskning |
-| Andrahand | `Andrahand` |
-| Externid | `GlobalID`, i en GeoPackage `objektidentitet` |
+Rapporten innehåller de kolumner som Artportalen kräver enligt mallens instruktioner, plus
+Antal och kommentarer.
+
+| Artportalen | Krav i Artportalen | Från lagret |
+|---|---|---|
+| Artnamn | måste anges | `taxon_vetenskapligtNamn` eller `taxon_svensktNamn`, uppslaget i Dyntaxa |
+| Lokalnamn | måste anges, högst 75 tecken | `objektnamn` eller eget lokalnamn |
+| Ost, Nord | måste anges för nya lokaler | geometrin, omräknad till SWEREF 99 TM |
+| Noggrannhet | måste anges för nya lokaler | `Noggrannhet`, annars verktygets standard |
+| Startdatum, Slutdatum | måste anges | `datumForObjektavgr` |
+| Antal | "kan, men bör ej, lämnas blank" | `Antal` om det är ett heltal större än 0, annars tomt |
+| Publik kommentar | kan lämnas tom, högst 1000 tecken | `kvantifiering`, t.ex. "Sparsam förekomst" |
+| Privat kommentar | kan lämnas tom, högst 1000 tecken | "Utförare: `utforare`. Kartläggning: `FK_KartlaggningBM`" (det som finns) |
+
+Rapporttabellen har också fältet Källans id (`GlobalID`, i en GeoPackage `objektidentitet`) som
+verktyg 2 använder för att inte lägga till samma fynd två gånger. Det exporteras inte: mallens
+kolumn Externid får bara användas inom projekt. Är id:t inte unikt i lagret, till exempel när
+flera GeoPackage-filer slagits ihop, används OBJECTID.
+
+### Antal
+
+Artportalen vill ha ett räknat antal, ett heltal större än 0, och Enhet (plantor/tuvor, exemplar,
+m² och så vidare) är valfri. Ett tomt Antal betyder att fyndet inte är räknat, vilket är
+sant för det mesta i NVI-data. Därför skriver verktyget aldrig något antal som inte är räknat:
+
+- Artinventering_generell har heltalsfältet `Antal`. Det används när det är större än 0.
+- `Artforekomst_punkt` (SIS-TS 199002) saknar antal. `kvantifiering` är en klass (Okänd,
+  Sparsam, God eller Mycket god förekomst) som inte går att översätta till ett antal, så Antal
+  blir tomt och klassen skrivs i Publik kommentar. Ett fåtal fynd har ett antal i `objektbeskrivning` ("1 buske", "Ca 5 st", "15 m2");
+  de går att fylla i för hand i rapporttabellen.
+- `kvantifiering` = "Förekommer sannolikt inte" betyder att arten inte hittades. De fynden
+  skippas.
 
 ## Regler för artnamn
 
