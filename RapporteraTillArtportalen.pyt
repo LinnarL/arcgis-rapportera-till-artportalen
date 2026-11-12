@@ -293,13 +293,17 @@ TOOLTIPS = {
         "OBJECTID-ordning."
     ),
     "mall": (
-        "Artportalens Excelmall för import (ap2_template_sv), sparad som .xlsx. Mallen "
-        "laddas ned som .xls från Artportalen; öppna den i Excel och spara som "
-        "Excel-arbetsbok (.xlsx). Raderna skrivs i bladet \"Alla arter\" från rad 3 och "
-        "kolumnerna matchas mot rubrikerna på rad 2. Mallen ändras inte."
+        "Artportalens Excelmall för import (ap2_template_sv.xls), som den laddas ned från "
+        "Artportalen. Verktyget kopierar mallen och fyller i kopian med Excel, så att filen "
+        "är Artportalens egen och går att klistra in i importen. Kräver Excel på datorn.\n"
+        "Raderna skrivs i bladet \"Alla arter\" från rad 3 och kolumnerna matchas mot "
+        "rubrikerna på rad 2. Mallen ändras inte. En mall sparad som .xlsx går också, utan "
+        "Excel, men Artportalen kan neka inklistring från en sådan fil."
     ),
     "out_xlsx": (
-        "Excelfil att importera i Artportalen. Har tabellen fler än 2000 rader, vilket är "
+        "Excelfil att importera i Artportalen, samma filtyp som mallen. Öppna den, markera "
+        "rubrikraden och fynden i bladet \"Alla arter\", kopiera och klistra in under "
+        "Rapportera, Importera fynd. Har tabellen fler än 2000 rader, vilket är "
         "Artportalens gräns per import, skrivs flera filer med _del1, _del2 och så vidare "
         "i namnet. Finns filen redan skrivs den över."
     ),
@@ -1210,9 +1214,120 @@ def _run_lagg_till(review, table, sprak=SPRAK_VET, dubbletter=True, radie=DEFAUL
 # =============================================================================
 
 
+# Fyller i en kopia av .xls-mallen med Excel (COM). Bara ASCII här: Windows PowerShell 5.1
+# läser skriptfiler utan BOM som ANSI. Datat kommer som UTF-8-JSON. Textkolumner får
+# formatet Text först, annars gör Excel om "2025-11-17" till ett datumtal.
+PS_FYLL_XLS = r"""
+$ErrorActionPreference = 'Stop'
+$job = Get-Content -LiteralPath $args[0] -Raw -Encoding UTF8 | ConvertFrom-Json
+Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int p);'
+$xl = $null; $wb = $null; $ws = $null; $r = $null; $xlPid = 0
+try {
+    $xl = New-Object -ComObject Excel.Application
+    [void][W.U]::GetWindowThreadProcessId([IntPtr]$xl.Hwnd, [ref]$xlPid)
+    $xl.Visible = $false; $xl.DisplayAlerts = $false
+    $wb = $xl.Workbooks.Open($job.path)
+    $ws = $wb.Worksheets.Item($job.sheet)
+    foreach ($c in $job.columns) {
+        $vals = @($c.values)
+        $n = $vals.Count
+        if ($n -eq 0) { continue }
+        $a = New-Object 'object[,]' $n, 1
+        for ($i = 0; $i -lt $n; $i++) { $a[$i, 0] = $vals[$i] }
+        $r = $ws.Range($ws.Cells.Item($job.row, $c.col), $ws.Cells.Item($job.row + $n - 1, $c.col))
+        if ($c.text) { $r.NumberFormat = '@' }
+        $r.Value2 = $a
+    }
+    $ws.Activate()
+    $wb.Save()
+} finally {
+    if ($wb) { $wb.Close($false) }
+    if ($xl) { $xl.Quit() }
+    foreach ($o in @($r, $ws, $wb, $xl)) {
+        if ($o) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($o) }
+    }
+    $r = $null; $ws = $null; $wb = $null; $xl = $null
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    # stop only the Excel instance this script started, never the user's own
+    if ($xlPid) { Start-Sleep -Milliseconds 500; Stop-Process -Id $xlPid -Force -ErrorAction SilentlyContinue }
+}
+"""
+
+
+def _xls_header(mall):
+    import xlrd
+    book = xlrd.open_workbook(mall)
+    if MALL_BLAD not in book.sheet_names():
+        return None
+    ws = book.sheet_by_name(MALL_BLAD)
+    header = {}
+    for c, v in enumerate(ws.row_values(MALL_RUBRIKRAD - 1), 1):
+        if _text(v) and _text(v) not in header:
+            header[_text(v)] = c
+    return header
+
+
+def _xlsx_header(mall):
+    from openpyxl import load_workbook
+    wb = load_workbook(mall, read_only=True)
+    if MALL_BLAD not in wb.sheetnames:
+        return None
+    header = {}
+    for c in next(wb[MALL_BLAD].iter_rows(min_row=MALL_RUBRIKRAD, max_row=MALL_RUBRIKRAD)):
+        if _text(c.value) and _text(c.value) not in header:
+            header[_text(c.value)] = c.column
+    wb.close()
+    return header
+
+
+def _write_xlsx(mall, path, header, part):
+    from openpyxl import load_workbook
+    wb = load_workbook(mall)
+    ws = wb[MALL_BLAD]
+    for i, row in enumerate(part):
+        for (name, alias, _, _), value in zip(EXPORT_FALT, row):
+            if value not in (None, ""):
+                ws.cell(MALL_FORSTA_DATARAD + i, header[alias], value)
+    wb.active = wb.sheetnames.index(MALL_BLAD)
+    wb.save(path)
+
+
+def _write_xls(mall, path, header, part):
+    """Kopiera .xls-mallen och fyll i den med Excel, så att filen är Artportalens egen."""
+    import shutil
+    import subprocess
+    shutil.copyfile(mall, path)
+    columns = []
+    for k, (name, alias, ftype, _) in enumerate(EXPORT_FALT):
+        values = [None if row[k] in (None, "") else row[k] for row in part]
+        if any(v is not None for v in values):
+            columns.append({"col": header[alias], "text": ftype == "TEXT", "values": values})
+    tmp = tempfile.mkdtemp(prefix="artportalen_")
+    job, script = os.path.join(tmp, "data.json"), os.path.join(tmp, "fyll.ps1")
+    try:
+        with open(job, "w", encoding="utf-8") as f:
+            json.dump({"path": os.path.abspath(path), "sheet": MALL_BLAD,
+                       "row": MALL_FORSTA_DATARAD, "columns": columns}, f, ensure_ascii=False)
+        with open(script, "w", encoding="ascii") as f:
+            f.write(PS_FYLL_XLS)
+        proc = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+             "-File", script, job],
+            capture_output=True, text=True, timeout=600,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        if "80040154" in err or "ComObject" in err:
+            raise ValueError("Excel behövs för att fylla i .xls-mallen men gick inte att starta. "
+                             "Installera Excel, eller använd mallen sparad som .xlsx.")
+        raise ValueError("Excel kunde inte skriva {}: {}".format(path, err[-800:]))
+
+
 def _run_exportera(table, mall, out_xlsx, messages=None):
     messages = messages or _PrintMessages()
-    from openpyxl import load_workbook
+    is_xls = mall.lower().endswith(".xls")
     tfm = _field_map(table)
     names = [f[0] for f in EXPORT_FALT]
     missing = [n for n in names if n.lower() not in tfm]
@@ -1223,15 +1338,10 @@ def _run_exportera(table, mall, out_xlsx, messages=None):
         rows = [list(r[1:]) for r in sorted(cur, key=lambda r: r[0])]
     if not rows:
         raise ValueError("Rapporttabellen är tom.")
-    wb = load_workbook(mall)
-    if MALL_BLAD not in wb.sheetnames:
+    header = _xls_header(mall) if is_xls else _xlsx_header(mall)
+    if header is None:
         raise ValueError("Mallen saknar bladet \"{}\". Använd Artportalens mall ap2_template_sv."
                          .format(MALL_BLAD))
-    ws = wb[MALL_BLAD]
-    header = {}
-    for c in ws[MALL_RUBRIKRAD]:
-        if c.value and c.value not in header:
-            header[_text(c.value)] = c.column
     aliases = [f[1] for f in EXPORT_FALT]
     missing = [a for a in aliases if a not in header]
     if missing:
@@ -1242,20 +1352,14 @@ def _run_exportera(table, mall, out_xlsx, messages=None):
     written = []
     for k, part in enumerate(parts, 1):
         arcpy.SetProgressorLabel("Skriver fil {} av {}".format(k, len(parts)))
-        wb = load_workbook(mall)
-        ws = wb[MALL_BLAD]
-        for i, row in enumerate(part):
-            for alias, value in zip(aliases, row):
-                if value not in (None, ""):
-                    ws.cell(MALL_FORSTA_DATARAD + i, header[alias], value)
-        wb.active = wb.sheetnames.index(MALL_BLAD)
-        path = out_xlsx if len(parts) == 1 else "{}_del{}{}".format(base, k, ext or ".xlsx")
-        wb.save(path)
+        path = out_xlsx if len(parts) == 1 else "{}_del{}{}".format(base, k, ext)
+        (_write_xls if is_xls else _write_xlsx)(mall, path, header, part)
         written.append(path)
         messages.addMessage("Skrev {} fynd till {}".format(len(part), path))
-    messages.addMessage("Importera filen i Artportalen under Rapportera, Importera fynd från "
-                        "Excel. Koordinatsystem (SWEREF 99 TM) och artnamnsspråk under Mina "
-                        "sidor måste stämma med filen.")
+    messages.addMessage("Öppna filen, markera rubrikraden (rad 2) och fynden i bladet \"{}\", "
+                        "kopiera och klistra in i Artportalen under Rapportera, Importera fynd. "
+                        "Koordinatsystem (SWEREF 99 TM) och artnamnsspråk under Mina sidor "
+                        "måste stämma med filen.".format(MALL_BLAD))
     return written
 
 
@@ -1568,10 +1672,10 @@ class ExporteraExcelmall:
 
     def getParameterInfo(self):
         table = _param("in_report", "Rapporttabell", "GPTableView", "Required")
-        mall = _param("mall", "Artportalens Excelmall (.xlsx)", "DEFile", "Required")
-        mall.filter.list = ["xlsx"]
+        mall = _param("mall", "Artportalens Excelmall (.xls)", "DEFile", "Required")
+        mall.filter.list = ["xls", "xlsx"]
         out = _param("out_xlsx", "Excelfil för import", "DEFile", "Required", "Output")
-        out.filter.list = ["xlsx"]
+        out.filter.list = ["xls", "xlsx"]
         return [table, mall, out]
 
     def isLicensed(self):
@@ -1579,19 +1683,27 @@ class ExporteraExcelmall:
 
     def updateParameters(self, parameters):
         p = _p(parameters)
-        if p["in_report"].altered and not p["out_xlsx"].altered:
+        mall = p["mall"].valueAsText or ""
+        ext = ".xlsx" if mall.lower().endswith(".xlsx") else ".xls"
+        if not p["out_xlsx"].altered:
             try:
-                ws = os.path.dirname(_workspace_of(arcpy.Describe(p["in_report"].value).catalogPath))
-                p["out_xlsx"].value = os.path.join(ws, "Artportalen_import.xlsx")
+                if p["out_xlsx"].valueAsText:
+                    p["out_xlsx"].value = os.path.splitext(p["out_xlsx"].valueAsText)[0] + ext
+                elif p["in_report"].value:
+                    ws = os.path.dirname(_workspace_of(
+                        arcpy.Describe(p["in_report"].value).catalogPath))
+                    p["out_xlsx"].value = os.path.join(ws, "Artportalen_import" + ext)
             except Exception:
                 pass
 
     def updateMessages(self, parameters):
         p = _p(parameters)
         mall = p["mall"].valueAsText
-        if mall and not mall.lower().endswith(".xlsx"):
-            p["mall"].setErrorMessage("Mallen måste vara .xlsx. Öppna Artportalens .xls-mall i "
-                                      "Excel och spara den som Excel-arbetsbok.")
+        out = p["out_xlsx"].valueAsText
+        if mall and out and (os.path.splitext(mall)[1].lower()
+                             != os.path.splitext(out)[1].lower()):
+            p["out_xlsx"].setErrorMessage("Utdata måste ha samma filtyp som mallen ({}).".format(
+                os.path.splitext(mall)[1].lower()))
         if p["in_report"].value:
             try:
                 fm = _field_map(p["in_report"].value)

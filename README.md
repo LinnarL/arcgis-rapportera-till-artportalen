@@ -15,16 +15,20 @@ som granskas i ArcGIS.
 3. **Exportera till Artportalens Excelmall** skriver tabellen i mallen, högst 2000 fynd per fil.
 
 Arbetsgång: kör 1, filtrera granskningslagret på `Status = 'Behöver granskning'`, välj Ja eller
-Nej i Godkänn (ändra gärna Förslag eller Lokalnamn), kör 2, kör 3 och importera filen i
-Artportalen under Rapportera, Importera fynd från Excel.
+Nej i Godkänn (ändra gärna Förslag eller Lokalnamn), kör 2 och kör 3. Öppna .xls-filen,
+markera rubrikraden (rad 2) och fynden i bladet "Alla arter", kopiera och klistra in i
+Artportalen under Rapportera, Importera fynd.
 
 ## Krav
 
 - ArcGIS Pro 3.x (testad på 3.6). Inga paket utöver dem som följer med Pro.
 - API-nycklar från [api-portal.artdatabanken.se](https://api-portal.artdatabanken.se/):
   Dyntaxa Taxon Service, och Species Observation System för dubblettkontrollen.
-- Artportalens importmall `ap2_template_sv`, sparad som .xlsx (öppna .xls-filen i Excel och
-  spara som Excel-arbetsbok).
+- Artportalens importmall `ap2_template_sv.xls`, som den laddas ned från Artportalen.
+- Excel, för att fylla i .xls-mallen. Verktyg 3 kopierar mallen och fyller i kopian med Excel
+  (utan fönster), så att filen är Artportalens egen. En mall sparad som .xlsx fungerar utan
+  Excel, men Excel behöver reparera den filen när den öppnas och Artportalen kan neka
+  inklistringen.
 - I Artportalen, Mina sidor: koordinatsystem SWEREF 99 TM och samma artnamnsspråk som i
   verktyget. Mallen kräver att inställningarna stämmer med filen.
 
@@ -66,8 +70,8 @@ dubblettsökning och nycklar som ovan.
 | Parameter | Beskrivning |
 |---|---|
 | Rapporttabell | Tabellen från verktyg 1. |
-| Artportalens Excelmall (.xlsx) | Mallen ändras inte. |
-| Excelfil för import | Fler än 2000 fynd ger `_del1`, `_del2` och så vidare. |
+| Artportalens Excelmall (.xls) | `ap2_template_sv.xls`. Mallen ändras inte. |
+| Excelfil för import | Samma filtyp som mallen. Fler än 2000 fynd ger `_del1`, `_del2` och så vidare. |
 
 ## Kolumner
 
