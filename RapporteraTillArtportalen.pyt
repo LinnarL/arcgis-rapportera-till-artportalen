@@ -162,7 +162,6 @@ GRANSKNING_FALT = [
     ("Forslag", "Förslag (ändra vid behov)", "TEXT", 255),
     ("Godkann", "Godkänn", "TEXT", 3),
     ("Dyntaxa_id", "Dyntaxa-id", "LONG", None),
-    ("Alternativ", "Andra alternativ", "TEXT", 1000),
     ("Kalla_OID", "Källans OBJECTID", "LONG", None),
 ] + RAPPORT_FALT
 
@@ -209,8 +208,8 @@ TOOLTIPS = {
     ),
     "out_review": (
         "Granskningslager (punkter) i en fil-geodatabas, med alla fynd från indata och "
-        "fälten Status, Orsak, Namn i lagret, Förslag, Godkänn, Dyntaxa-id och Andra "
-        "alternativ, plus rapportens kolumner.\n"
+        "fälten Status, Orsak, Namn i lagret, Förslag, Godkänn och Dyntaxa-id, plus "
+        "rapportens kolumner.\n"
         "Status Behöver granskning: välj Ja eller Nej i Godkänn och ändra gärna Förslag "
         "eller andra fält (t.ex. Lokalnamn), kör sedan Lägg till granskade fynd.\n"
         "Finns lagret redan skrivs det över, och besluten i det försvinner. Vill du "
@@ -826,10 +825,10 @@ def _existing_ids(table):
 def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
     """
     Bedöm ett fynd. row är en dict med rapportfälten (utom Artnamn). Returnerar dict med
-    Status, Orsak, Forslag, Dyntaxa_id, Alternativ, Artnamn och taxon.
+    Status, Orsak, Forslag, Dyntaxa_id, Artnamn och taxon.
     """
     res = {"Status": STATUS_KLAR, "Orsak": "", "Forslag": "", "Dyntaxa_id": None,
-           "Alternativ": "", "Artnamn": "", "taxon": None}
+           "Artnamn": "", "taxon": None}
 
     def review(reason):
         res["Status"] = STATUS_GRANSKA
@@ -840,7 +839,6 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
                 res["Forslag"] = dyntaxa.vet(sug[0][0])
                 res["Dyntaxa_id"] = sug[0][0]["taxonId"]
                 res["Orsak"] = "{}. Förslag: {}".format(reason, sug[0][1])
-                res["Alternativ"] = "; ".join(dyntaxa.label(t) for t, _ in sug[1:6])
             else:
                 res["Orsak"] = reason + ". Inget förslag hittades, skriv in rätt namn i Förslag"
         return res
@@ -1056,7 +1054,6 @@ def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
                 values.update({
                     "Status": res["Status"], "Orsak": _cut(res["Orsak"], 1000),
                     "Forslag": res["Forslag"], "Godkann": None, "Dyntaxa_id": res["Dyntaxa_id"],
-                    "Alternativ": _cut(res["Alternativ"], 1000),
                 })
                 if res["Status"] == STATUS_AVVISAD:
                     values["Godkann"] = "Nej"
