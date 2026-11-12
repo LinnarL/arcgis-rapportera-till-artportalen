@@ -4,7 +4,8 @@ Rapportera till Artportalen
 ===========================
 
 Tre verktyg som tar artfynd från ett punktlager med Ekologigruppens schema
-Artinventering_generell och gör om dem till Artportalens Excelimport.
+Artinventering_generell, eller Artforekomst_punkt i en NVI-leverans (GeoPackage), och gör
+om dem till Artportalens Excelimport.
 
 1. Förbered rapport till Artportalen
    Läser lagret (urval och definitionsfråga gäller), slår upp varje artnamn i
@@ -114,11 +115,15 @@ STATUS_TILLAGD = "Tillagd efter granskning"
 STATUS_AVVISAD = "Avvisad vid granskning"
 DOMAIN_GODKANN = "RapporteraArtportalen_JaNej"
 
-# Fält i Artinventering_generell (namn, inte alias). Bara artnamn och datum krävs.
+# Fält i Artinventering_generell och Artforekomst_punkt (SIS-TS 199002, NVI-leveransens
+# GeoPackage). Namn, inte alias. Ett artnamnsfält och datum krävs. Finns båda artnamnsfälten
+# används det vetenskapliga namnet, och det svenska när det vetenskapliga är tomt.
 SRC_ARTNAMN = "taxon_svensktNamn"
+SRC_VETNAMN = "taxon_vetenskapligtNamn"
 SRC_DATUM = "datumForObjektavgr"
-SRC_FALT = [SRC_ARTNAMN, SRC_DATUM, "Antal", "kvantifiering", "objektbeskrivning",
-            "Noggrannhet", "utforare", "objektnamn", "Andrahand"]
+SRC_ID = "objektidentitet"  # Externid när lagret saknar GlobalID (GeoPackage)
+SRC_FALT = [SRC_ARTNAMN, SRC_VETNAMN, SRC_DATUM, "Antal", "kvantifiering", "objektbeskrivning",
+            "Noggrannhet", "utforare", "objektnamn", "Andrahand", SRC_ID]
 
 # Rapporttabellens fält: (namn, alias = kolumnrubrik i mallen, typ, längd)
 RAPPORT_FALT = [
@@ -164,12 +169,17 @@ DJUR, RYGGSTRANGSDJUR = 5000001, 5000034
 
 TOOLTIPS = {
     "in_layer": (
-        "Punktlager med schemat Artinventering_generell (NVI-projektmallen). Lagrets urval "
-        "och definitionsfråga gäller: bara de fynd lagret visar behandlas.\n"
-        "Fälten taxon_svensktNamn (Artnamn) och datumForObjektavgr (Datum) krävs. Antal, "
-        "kvantifiering, objektbeskrivning, Noggrannhet, utforare, objektnamn och Andrahand "
-        "används om de finns. GlobalID blir Externid i Artportalen, så att varje fynd går "
-        "att spåra tillbaka till punkten."
+        "Punktlager i kartan med schemat Artinventering_generell (NVI-projektmallen) eller "
+        "Artforekomst_punkt i en NVI-leverans (GeoPackage: lägg till main.Artforekomst_punkt "
+        "i kartan först). Lagrets urval och definitionsfråga gäller: bara de fynd lagret "
+        "visar behandlas.\n"
+        "Datum (datumForObjektavgr) och ett artnamn krävs. Finns både "
+        "taxon_vetenskapligtNamn och taxon_svensktNamn används det vetenskapliga namnet, och "
+        "det svenska när det vetenskapliga är tomt. Antal, kvantifiering, objektbeskrivning, "
+        "Noggrannhet, utforare, objektnamn och Andrahand används om de finns.\n"
+        "GlobalID, eller objektidentitet i en GeoPackage, blir Externid i Artportalen, så att "
+        "varje fynd går att spåra tillbaka till punkten. Multipunkter med en punkt går bra; "
+        "med flera punkter skippas fyndet."
     ),
     "out_table": (
         "Rapporttabell i en geodatabas. Kolumnerna följer bladet \"Alla arter\" i "
@@ -268,7 +278,8 @@ TOOLTIPS = {
 }
 
 SUMMARY_FORBERED = (
-    "Gör om artfynd i ett lager med schemat Artinventering_generell till en tabell för "
+    "Gör om artfynd i ett lager med schemat Artinventering_generell eller Artforekomst_punkt "
+    "(NVI-leverans i GeoPackage) till en tabell för "
     "Artportalens Excelimport. Varje artnamn slås upp i Dyntaxa; pekar ett namn på både art "
     "och underart används arten. Fynd som redan finns i Artportalen eller andra källor i "
     "SOS (samma taxon, samma datum, inom dubblettradien) skippas.\n"
@@ -617,7 +628,8 @@ def _field_map(dataset):
 
 def _missing_source_fields(layer):
     have = _field_map(layer)
-    return [f for f in (SRC_ARTNAMN, SRC_DATUM) if f.lower() not in have]
+    missing = [] if {SRC_ARTNAMN.lower(), SRC_VETNAMN.lower()} & set(have) else [SRC_ARTNAMN]
+    return missing + ([SRC_DATUM] if SRC_DATUM.lower() not in have else [])
 
 
 def _globalid_field(layer):
@@ -814,7 +826,8 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
         res.update(Status=STATUS_SKIPPAD, Orsak="datum saknas")
         return res
     if wgs84_xy is None:
-        res.update(Status=STATUS_SKIPPAD, Orsak="geometri saknas")
+        res.update(Status=STATUS_SKIPPAD,
+                   Orsak="geometri saknas eller är en multipunkt med flera punkter")
         return res
 
     forslag, godkann = decision or ("", "")
@@ -889,10 +902,13 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
                          "(Define Projection) först.")
     tm = arcpy.SpatialReference(SWEREF99TM)
     wgs = arcpy.SpatialReference(WGS84)
-    missing = [f for f in SRC_FALT if f.lower() not in fm]
+    missing = [f for f in SRC_FALT if f.lower() not in fm
+               and f not in (SRC_ID, SRC_VETNAMN, SRC_ARTNAMN)]
     if missing:
         messages.addMessage("    Fält som saknas i lagret och lämnas tomma: " + ", ".join(missing))
-    if not gid:
+    if not gid and SRC_ID.lower() in fm:
+        messages.addMessage("    Lagret saknar GlobalID. Externid blir objektidentitet.")
+    elif not gid:
         messages.addWarningMessage("Lagret har inget GlobalID. Externid blir OBJECTID, som inte "
                                    "är stabilt om data kopieras.")
 
@@ -904,7 +920,8 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
         for r in cur:
             shape = r[1]
             xy_tm = xy_wgs = None
-            if shape is not None and shape.pointCount == 1:  # multipunkt med flera punkter: nej
+            # GeoPackage-lager är ofta multipunkt med en punkt per objekt; flera punkter: nej
+            if shape is not None and shape.pointCount == 1:
                 pt = arcpy.PointGeometry(shape.firstPoint, sr_in)
                 p_tm = pt.projectAs(tm).firstPoint
                 p_wgs = pt.projectAs(wgs).firstPoint
@@ -916,7 +933,7 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
             obs = _text(get(r, "utforare"))
             row = {
                 "Kalla_OID": r[0],
-                "Namn_i_lagret": _text(get(r, SRC_ARTNAMN)),
+                "Namn_i_lagret": _text(get(r, SRC_VETNAMN)) or _text(get(r, SRC_ARTNAMN)),
                 "shape": shape,
                 "xy_tm": xy_tm,
                 "xy_wgs": xy_wgs,
@@ -929,7 +946,8 @@ def _read_source(layer, noggrannhet, lokalnamn, messages):
                 "Publik_kommentar": _cut(publik, MAX_KOMMENTAR),
                 "Privat_kommentar": _cut("Observatör: " + obs if obs else "", MAX_KOMMENTAR),
                 "Andrahand": "Ja" if _text(get(r, "Andrahand")).lower() in ("ja", "x", "1") else "",
-                "Externid": _text(r[-1]) if gid else "OID {}".format(r[0]),
+                "Externid": (_text(r[-1]) if gid else _text(get(r, SRC_ID))
+                             or "OID {}".format(r[0])),
             }
             row["Slutdatum"] = row["Startdatum"]
             rows.append(row)
@@ -1375,8 +1393,8 @@ class ForberedRapport:
         self.canRunInBackground = False
 
     def getParameterInfo(self):
-        lyr = _param("in_layer", "Artinventeringslager", "GPFeatureLayer", "Required")
-        lyr.filter.list = ["Point"]
+        lyr = _param("in_layer", "Artlager", "GPFeatureLayer", "Required")
+        lyr.filter.list = ["Point", "Multipoint"]
         table = _param("out_table", "Rapporttabell", "DETable", "Required", "Output")
         review = _param("out_review", "Granskningslager", "DEFeatureClass", "Required", "Output")
         prev = _param("tidigare", "Beslut från tidigare granskning", "GPFeatureLayer",
@@ -1406,7 +1424,8 @@ class ForberedRapport:
                 if missing:
                     p["in_layer"].setErrorMessage(
                         "Lagret saknar fälten {}. Verktyget kräver schemat "
-                        "Artinventering_generell.".format(", ".join(missing)))
+                        "Artinventering_generell eller Artforekomst_punkt."
+                        .format(", ".join(missing)))
             except Exception:
                 pass
         for name in ("out_table", "out_review"):

@@ -1,7 +1,7 @@
 # Rapportera till Artportalen
 
 ArcGIS Pro-verktygslåda som gör om artfynd i ett lager med Ekologigruppens schema
-Artinventering_generell till en fil för Artportalens Excelimport. Artnamnen kontrolleras mot
+Artinventering_generell, eller `main.Artforekomst_punkt` i en NVI-leverans (GeoPackage), till en fil för Artportalens Excelimport. Artnamnen kontrolleras mot
 Dyntaxa, dubbletter söks i Artportalen och andra källor via SOS, och oklara namn får förslag
 som granskas i ArcGIS.
 
@@ -38,7 +38,7 @@ Katalogfönstret, Verktygslådor, högerklicka och välj Lägg till verktygslåd
 
 | Parameter | Standard | Beskrivning |
 |---|---|---|
-| Artinventeringslager | | Punktlager med schemat Artinventering_generell. Urval och definitionsfråga gäller. `taxon_svensktNamn` och `datumForObjektavgr` krävs. |
+| Artlager | | Punkt- eller multipunktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definitionsfråga gäller. `datumForObjektavgr` och ett artnamn krävs: `taxon_vetenskapligtNamn` om det är ifyllt, annars `taxon_svensktNamn`. |
 | Rapporttabell | `Artportalen_rapport` i projektets geodatabas | Tabell med Artportalens kolumner. |
 | Granskningslager | `Artportalen_granskning` | Alla fynd med status och namnförslag. Måste ligga i en fil-geodatabas. |
 | Artnamnsspråk | Vetenskapligt namn | Dyntaxas rekommenderade vetenskapliga eller svenska namn. |
@@ -67,7 +67,7 @@ dubblettsökning och nycklar som ovan.
 
 | Artportalen | Artinventering_generell |
 |---|---|
-| Artnamn | `taxon_svensktNamn`, uppslaget i Dyntaxa |
+| Artnamn | `taxon_vetenskapligtNamn` eller `taxon_svensktNamn`, uppslaget i Dyntaxa |
 | Antal | `Antal` |
 | Lokalnamn | `objektnamn` (högst 75 tecken) |
 | Ost, Nord | geometrin, omräknad till SWEREF 99 TM |
@@ -76,7 +76,7 @@ dubblettsökning och nycklar som ovan.
 | Publik kommentar | `objektbeskrivning` och `kvantifiering` |
 | Privat kommentar | `utforare`, Dyntaxa-id och eventuell omtolkning vid granskning |
 | Andrahand | `Andrahand` |
-| Externid | `GlobalID` |
+| Externid | `GlobalID`, i en GeoPackage `objektidentitet` |
 
 ## Regler för artnamn
 
@@ -99,5 +99,6 @@ Artportalen och fynd som redan har importerats. Kontrollen tar ungefär en minut
 
 - NVI-mallens fält `Noggrannhet` har standardvärdet 5 m, så nya punkter får 5 m om ingen ändrar
   det.
+- Multipunkter med en punkt (vanligt i GeoPackage) går bra. Med flera punkter skippas fyndet.
 - Dyntaxa-svar cachas i `%LOCALAPPDATA%\ArcGIS-RapporteraTillArtportalen`.
 - Avsluta redigeringen av granskningslagret innan verktyg 2 körs.
