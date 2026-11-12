@@ -111,6 +111,12 @@ sant för det mesta i NVI-data. Därför skriver verktyget aldrig något antal s
 ## Regler för artnamn
 
 - Pekar ett namn på både art och underart används arten (t.ex. snöbär).
+- Matchar namnet som ska skrivas i rapporten flera taxa i Dyntaxa skrivs Dyntaxa-id i
+  kolumnen Artnamn i stället, vilket mallen tillåter. Artportalens import slår upp namnet bland
+  alla namn, även äldre namn och synonymer, och avvisar annars fyndet med
+  `TaxonConversionError_MultipleTaxons`. Exempel: *Centaurea scabiosa* är både arten väddklint
+  och ett äldre namn på underarten subsp. *scabiosa*, så väddklint skrivs som 264738. Körloggen
+  listar vilka namn det gäller. Med svenska namn blir det fler, t.ex. snöbär och backsippa.
 - Till granskning med förslag: frågetecken, "a/b" eller "eller", felstavning (likhetssökning i
   Dyntaxa), flera möjliga taxa, och taxa som Dyntaxa undantar från rapportering (förslaget blir
   arten).

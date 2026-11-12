@@ -504,6 +504,7 @@ class Dyntaxa:
         self.key = key
         self.sprak = sprak
         self._forslag = {}
+        self.som_id = {}  # namn -> taxonId för namn som skrivs som id i rapporten
 
     def _search(self, text, page_size=50):
         return self._get("/taxa/search", searchString=text, searchFields="Both",
@@ -526,7 +527,19 @@ class Dyntaxa:
                      and n["isRecommended"]), "")
 
     def report_name(self, t):
-        return (self.sv(t) or self.vet(t)) if self.sprak == SPRAK_SV else self.vet(t)
+        """
+        Namnet som skrivs i rapporten. Artportalen slår upp namnet bland alla namn i Dyntaxa,
+        även synonymer, och avvisar fyndet om det matchar flera taxa (t.ex. Centaurea
+        scabiosa, som också är ett äldre namn på en underart). Då skrivs Dyntaxa-id i
+        stället, vilket mallen tillåter i kolumnen Artnamn.
+        """
+        name = (self.sv(t) or self.vet(t)) if self.sprak == SPRAK_SV else self.vet(t)
+        ids = {x["taxonId"] for x in self._search(name)
+               if any(n["name"].strip().lower() == name.lower() for n in x["names"])}
+        if ids - {t["taxonId"]}:
+            self.som_id[name] = t["taxonId"]
+            return str(t["taxonId"])
+        return name
 
     def label(self, t):
         sv = self.sv(t)
@@ -902,6 +915,13 @@ def _resolve(row, name, decision, dyntaxa, dubbletter, wgs84_xy):
     return res
 
 
+def _report_ids(dyntaxa, messages):
+    if dyntaxa.som_id:
+        messages.addMessage("    Skrivs som Dyntaxa-id i Artnamn, eftersom namnet matchar flera "
+                            "taxa i Artportalen: " + ", ".join(
+                                "{} ({})".format(n, i) for n, i in sorted(dyntaxa.som_id.items())))
+
+
 def _lokalnamn(layer_value, text, mode):
     """objektnamn i lagret + lokalnamn från verktyget enligt läget (LAGE_*)."""
     if text and (mode == LAGE_ERSATT or not layer_value):
@@ -1078,6 +1098,7 @@ def _run_forbered(layer, out_table, out_review, sprak=SPRAK_VET,
     if groups:
         messages.addMessage("    I rapporten per artgrupp: " + ", ".join(
             "{} {}".format(g, n) for g, n in sorted(groups.items(), key=lambda x: -x[1])))
+    _report_ids(dyntaxa, messages)
     no_geom = sum(1 for r in rows if r["xy_tm"] is None)
     if no_geom:
         messages.addWarningMessage("{} fynd saknar geometri och finns inte i "
@@ -1201,6 +1222,7 @@ def _run_lagg_till(review, table, sprak=SPRAK_VET, dubbletter=True, radie=DEFAUL
             raise ValueError("Granskningslagret eller rapporttabellen är under redigering. Spara "
                              "och avsluta redigeringen först.")
         raise
+    _report_ids(dyntaxa, messages)
     messages.addMessage("Tillagda i rapporten: {}. Avvisade: {}. Utan Ja/Nej: {}. Fortfarande "
                         "kvar att granska eller skippade: {}. Fanns redan: {}."
                         .format(counts["tillagda"], counts["avvisade"], counts["obesvarade"],
