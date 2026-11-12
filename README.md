@@ -1,12 +1,10 @@
 # Rapportera till Artportalen
 
-ArcGIS Pro-verktygslåda som gör om artfynd i ett lager med Ekologigruppens schema
-Artinventering_generell, eller `main.Artforekomst_punkt` i en NVI-leverans (GeoPackage), till en
-fil för Artportalens Excelimport. Artnamnen kontrolleras mot Dyntaxa, dubbletter söks i
-Artportalen och andra källor via SOS, och oklara namn får förslag som granskas i ArcGIS.
+Det här är en verktygslåda till ArcGIS Pro som för över artfynd från NVI-leveranser i GPKG-format (eller Ekologigruppens egna lager artinventering_generell), till rätt format för att kunna laddas upp i bulk till Artportalen. För att importen ska vara korrekt och fel lätt kunna åtgärdas, så kontrolleras artnamn mot SLUs Dyntaxa-API, och dubbletter av artfynd kontrolleras mot Artportalens API (SOS, species observation system). När det uppstår oklarheter (ett artnamn hittas inte, eller innehåller frågetecken, eller innehåller flera olika artnamn) ges användaren ges möjlighet att granska och korrigera fynd som inte med säkerhet kan flyttas direkt till Artportalens leveransark (.xls-mallen). 
 
 ## Verktyg
 
+Toolboxen innehåller tre separata verktyg/skript:
 1. **Förbered rapport till Artportalen** läser lagret och skriver
    - en rapporttabell med Artportalens obligatoriska kolumner, Antal och kommentarer
      (alias = kolumnrubrik)
@@ -14,10 +12,13 @@ Artportalen och andra källor via SOS, och oklara namn får förslag som granska
 2. **Lägg till granskade fynd** lägger till rader med Godkänn = Ja i rapporttabellen.
 3. **Exportera till Artportalens Excelmall** skriver tabellen i mallen, högst 2000 fynd per fil.
 
-Arbetsgång: kör 1, filtrera granskningslagret på `Status = 'Behöver granskning'`, välj Ja eller
-Nej i Godkänn (ändra gärna Förslag eller Lokalnamn), kör 2 och kör 3. Öppna .xls-filen,
-markera rubrikraden (rad 2) och fynden i bladet "Alla arter", kopiera och klistra in i
-Artportalen under Rapportera, Importera fynd.
+Arbetsgången är: 
+
+Peka verktyg 1 på ditt artlager, ange fyndgemensamma parametrar (t.ex lokalnamn). Verktyg 1 ger en tabell med godkända observationer och ett punktlager med observationer för granskning, både lagret och tabellen ligger i din Geodatabase och hamnar automatiskt i din öppna kartvy.
+
+Öppna attributtabellen för granskningslagret, filtrera granskningslagret på `Status = 'Behöver granskning'`. Läs anledningen för granskning, kontrollera om den föreslagna arten är rätt för observationen. Är den det kan fältet godkänn sättas till Ja. Gör detta för alla objekt, och kör sedan verktyg 2 för att lägga till de godkända observationerna i rapportarket. 
+
+Kör sedan verktyg 3 för att exportera alla dina godkända fynd från GIS till Artportalens excelark.
 
 ## Krav
 
@@ -26,11 +27,9 @@ Artportalen under Rapportera, Importera fynd.
   Dyntaxa Taxon Service, och Species Observation System för dubblettkontrollen.
 - Artportalens importmall `ap2_template_sv.xls`, som den laddas ned från Artportalen.
 - Excel, för att fylla i .xls-mallen. Verktyg 3 kopierar mallen och fyller i kopian med Excel
-  (utan fönster), så att filen är Artportalens egen. En mall sparad som .xlsx fungerar utan
-  Excel, men Excel behöver reparera den filen när den öppnas och Artportalen kan neka
-  inklistringen.
-- I Artportalen, Mina sidor: koordinatsystem SWEREF 99 TM och samma artnamnsspråk som i
-  verktyget. Mallen kräver att inställningarna stämmer med filen.
+  (utan fönster).
+**- I Artportalen, Mina sidor: koordinatsystem SWEREF 99 TM och samma artnamnsspråk som i
+  verktyget. Mallen kräver att inställningarna stämmer med filen.**
 
 ## Lägg till i ArcGIS Pro
 
@@ -44,7 +43,7 @@ logiken densamma.
 
 ### 1. Raden läses
 
-Bara de fynd som lagret visar i kartan behandlas (urval och definitionsfråga gäller).
+Bara de fynd som lagret visar i kartan behandlas (dvs urval och definition queries används).
 
 | Uppgift | Varifrån |
 |---|---|
@@ -56,7 +55,7 @@ Bara de fynd som lagret visar i kartan behandlas (urval och definitionsfråga g�
 | Antal | `Antal` om det är ett heltal större än 0. GeoPackage saknar fältet, så där blir det tomt. |
 | Publik kommentar | `kvantifiering`, t.ex. "Sparsam förekomst". |
 | Privat kommentar | "Utförare: `utforare`. Kartläggning: `FK_KartlaggningBM`" |
-| Källans id | `objektidentitet` (GlobalID i en geodatabas). Används bara av verktyg 2 och exporteras inte. |
+| Källans id | `objektidentitet` (GlobalID i en geodatabas). Används bara av verktyg 2 internt och exporteras inte. |
 
 ### 2. Fynd som inte ska rapporteras skippas
 
@@ -80,12 +79,12 @@ eller synonym.
 Fyndet går till granskning (status **Behöver granskning**) när
 
 - namnet innehåller frågetecken, "/" eller "eller" ("lerkroksmossa?", "blomsterlupin/sandlupin").
-  Osäkerheten ska inte döljas, så verktyget föreslår men väljer aldrig själv.
+  Du som användare får ta ställning till osäkerheter i granskningssteget.
 - namnet inte finns i Dyntaxa, ofta en felstavning. Det mest lika namnet föreslås.
 - namnet passar flera taxa som inte är art och underart till varandra.
 - Dyntaxa undantar taxonet från rapportering. Arten föreslås.
 
-Förslaget skrivs i Förslag och skälet i Orsak.
+Förslaget skrivs i fälten Förslag och skälet i Orsak i granskningslagret.
 
 ### 4. Namnet i rapporten bestäms
 
@@ -144,8 +143,8 @@ scabiosa*.
 
 | Parameter | Standard | Beskrivning |
 |---|---|---|
-| Artlager | | Punkt- eller multipunktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definitionsfråga gäller. |
-| Lokalnamn | | Lokalnamn för alla fynd, t.ex. "NVI Akademiska Hus Albano". Krävs. Kan ändras per fynd i granskningslagret. |
+| Artlager | | Punktlager i kartan med schemat Artinventering_generell eller Artforekomst_punkt (dra in `main.Artforekomst_punkt` från en .gpkg i kartan, så finns det i listan). Urval och definition queries gäller. |
+| Lokalnamn | | Lokalnamn för alla fynd, t.ex. "NVI Akademiska Hus Albano". Krävs. Kan ändras per fynd i granskningslagret om det behövs. |
 | Rapporttabell | `Artportalen_rapport` i projektets geodatabas | Se Kolumner nedan. |
 | Granskningslager | `Artportalen_granskning` | Alla fynd med status och namnförslag. Måste ligga i en fil-geodatabas. |
 | Artnamnsspråk | Vetenskapligt namn | Dyntaxas rekommenderade vetenskapliga eller svenska namn. |
@@ -167,7 +166,7 @@ dubblettsökning och nycklar som ovan.
 |---|---|
 | Rapporttabell | Tabellen från verktyg 1. |
 | Artportalens Excelmall (.xls) | `ap2_template_sv.xls`. Mallen ändras inte. |
-| Excelfil för import | Samma filtyp som mallen. Fler än 2000 fynd ger `_del1`, `_del2` och så vidare. |
+| Excelfil för import | Samma filtyp som mallen. Fler än 2000 fynd ger `_del1`, `_del2` och så vidare, för att inte överskrida Artportalens maxgräns för rapporter. |
 
 ## Kolumner
 
@@ -194,14 +193,14 @@ används OBJECTID.
 
 Artportalen vill ha ett räknat antal, ett heltal större än 0, och Enhet (plantor/tuvor,
 exemplar, m² och så vidare) är valfri. Ett tomt Antal betyder att fyndet inte är räknat, vilket
-gäller det mesta i NVI-data, så verktyget skriver aldrig ett antal som inte är räknat:
+oftast är fallet, så verktyget skriver aldrig ett antal som inte är räknat:
 
 - Artinventering_generell har heltalsfältet `Antal`. Det används när det är större än 0.
 - `Artforekomst_punkt` (SIS-TS 199002) saknar antal. `kvantifiering` är en klass (Okänd,
   Sparsam, God eller Mycket god förekomst) som inte går att översätta till ett antal, så Antal
   blir tomt och klassen skrivs i Publik kommentar. Ett fåtal fynd har ett antal i
   `objektbeskrivning` ("1 buske", "Ca 5 st", "15 m2"); de går att fylla i för hand i
-  rapporttabellen.
+  rapporttabellen om det behövs.
 
 ## Bra att veta
 
@@ -210,5 +209,5 @@ gäller det mesta i NVI-data, så verktyget skriver aldrig ett antal som inte ä
   utdata innan verktyget körs, så besluten i ett lager som skrivs över går inte att läsa.
 - NVI-mallens fält `Noggrannhet` har standardvärdet 5 m, så nya punkter får 5 m om ingen ändrar
   det.
-- Dyntaxa-svar cachas i `%LOCALAPPDATA%\ArcGIS-RapporteraTillArtportalen`.
-- Avsluta redigeringen av granskningslagret innan verktyg 2 körs.
+- Dyntaxa-svar cachas i `%LOCALAPPDATA%\ArcGIS-RapporteraTillArtportalen` för att inte behöva anropa APIet i onödan.
+- Avsluta redigeringen av granskningslagret innan verktyg 2 körs, glöm inte att spara ändringar!
