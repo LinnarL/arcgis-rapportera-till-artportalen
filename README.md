@@ -205,7 +205,7 @@ oftast är fallet, så verktyget skriver aldrig ett antal som inte är räknat:
 ## Bra att veta
 
 - Ska verktyg 1 köras om efter en granskning: ge det nya granskningslagret ett annat namn och
-  peka ut det gamla under Beslut från tidigare granskning. Ramverket raderar ett befintligt
+  peka ut det gamla under Beslut från tidigare granskning. Arcgis raderar befintlig
   utdata innan verktyget körs, så besluten i ett lager som skrivs över går inte att läsa.
 - NVI-mallens fält `Noggrannhet` har standardvärdet 5 m, så nya punkter får 5 m om ingen ändrar
   det.
